@@ -150,7 +150,7 @@ db-psql:
 [group('docker')]
 image-build:
     pnpm exec turbo prune @repo/api @repo/worker --docker
-    docker build -t aws-saas-playground:local .
+    docker build -t learn-aws-saas-ts:local .
 
 # commit SHA タグで ECR に push する（M4 実装時に追加）
 [group('docker')]

@@ -1,4 +1,4 @@
-# aws-saas-playground
+# learn-aws-saas-ts
 
 AWS SaaS バックエンドの定番構成（コンテナ / RDB / NoSQL / キュー / シークレットマネージャー / S3 / CloudFront+Cognito）を Terraform と TypeScript モノレポで学ぶためのプロジェクト。
 
