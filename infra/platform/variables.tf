@@ -4,7 +4,6 @@ variable "aws_region" {
   default     = "ap-northeast-1"
 }
 
-# tflint-ignore: terraform_unused_declarations
 variable "project_name" {
   description = "リソース名のプレフィックスとして使うプロジェクト名。"
   type        = string
