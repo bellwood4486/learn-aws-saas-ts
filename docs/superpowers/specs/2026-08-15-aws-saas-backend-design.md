@@ -443,11 +443,13 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 - ✅ `.pre-commit-config.yaml`（Biome / TFLint / hadolint / gitleaks）
 - ✅ **ゲート①**: `set shell := ["mise", "exec", "--", "sh", "-c"]` で解決
 - ✅ **ゲート②**: フォールバック不要と確認（Node の型除去 + pnpm symlink で `@repo/core` を直接解決できる）
-- ✅ `infra/bootstrap/` 実装（`terraform validate` 済み。apply は次のステップでユーザー確認の上で実行）
+- ✅ `infra/bootstrap/` 実装・apply 済み（tfstate バケット `learn-aws-saas-ts-tfstate-<account_id>` を作成。local state を commit）
 
 **M1: platform 層 — VPC 不要で4要素を体感（月$1）**
-- S3 / DynamoDB / SQS+DLQ / ECR / アプリ用シークレットを apply
-- `@repo/core` を実装し、ローカルから SSO 認証情報で直接叩いて動作確認
+- `infra/platform/` を `infra/bootstrap/` と同じファイル構成（main/variables/outputs/providers/versions.tf + README.md）で実装し、backend は bootstrap のバケットを参照する S3 backend（`key = "platform/terraform.tfstate"`）
+- S3（アプリ用オブジェクト、非公開）/ DynamoDB（テーブル名 `items`、PK=`id` の String のみ。items ドメインの属性が固まるのは M4 以降だが DynamoDB はスキーマレスなので先に作って困らない）/ SQS+DLQ（`visibility_timeout=30秒`、`maxReceiveCount=3`）/ ECR（lifecycle policy で最新10個のみ保持）/ アプリ用シークレット（Secrets Manager。キー名だけ決めてダミー値のプレースホルダ。実際の外部 API キーは持たない想定）を apply
+- **GitHub OIDC provider/role はここでは作らない。** 表（Terraform のレイヤー分割）には platform 層の内容として記載しているが、実際に使うのは M8（CI/CD）なので作るタイミングを合わせ、M8 でまとめて追加する
+- `@repo/core` に `s3.ts` / `dynamodb.ts` / `sqs.ts` / `secrets.ts` の薄いクライアントラッパーを実装（ドメインロジックは含めない。M4 以降で items の CRUD を追加）し、ローカルから SSO 認証情報で直接叩いて動作確認
 - **ここまで VPC も ALB も RDS も要らない。学びたい6要素のうち4つがこの時点で終わる**
 
 **M2: network 層 — apply/destroy サイクルを体で覚える**
