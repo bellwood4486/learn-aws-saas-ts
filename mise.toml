@@ -1,0 +1,14 @@
+[tools]
+node       = "24.19.0"   # LTS。`mise latest node@lts` の解決結果と一致
+pnpm       = "latest"
+terraform  = "1.15.8"
+just       = "1.58.0"
+tflint     = "latest"
+awscli     = "latest"
+hadolint   = "latest"    # Dockerfile lint
+gitleaks   = "latest"    # シークレット検出（pre-commit）
+actionlint = "latest"    # GitHub Actions workflow lint
+
+[env]
+AWS_PROFILE = "personal"
+AWS_REGION  = "ap-northeast-1"

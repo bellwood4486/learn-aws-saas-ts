@@ -1,0 +1,24 @@
+{
+  "name": "@repo/api",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/main.ts",
+    "start": "node src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@repo/contracts": "workspace:*",
+    "@repo/core": "workspace:*",
+    "fastify": "^5.12.0",
+    "@fastify/type-provider-typebox": "^6.1.0"
+  },
+  "devDependencies": {
+    "@repo/tsconfig": "workspace:*",
+    "@types/node": "^24.13.3",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,27 @@
+repos:
+  - repo: local
+    hooks:
+      - id: biome
+        name: biome check
+        entry: mise exec -- pnpm exec biome check --write
+        language: system
+        types_or: [javascript, ts, jsx, tsx, json]
+
+      - id: tflint
+        name: tflint
+        entry: bash -c 'cd infra && mise exec -- tflint --recursive'
+        language: system
+        pass_filenames: false
+        files: ^infra/
+
+      - id: hadolint
+        name: hadolint
+        entry: mise exec -- hadolint
+        language: system
+        files: (^|/)Dockerfile$
+
+      - id: gitleaks
+        name: gitleaks
+        entry: mise exec -- gitleaks protect --staged --verbose
+        language: system
+        pass_filenames: false

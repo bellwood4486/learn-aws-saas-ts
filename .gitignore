@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# terraform
+# .terraform.lock.hcl はプロバイダバージョン固定のためコミットする（除外しない）
+.terraform/
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+
+# env
+.env
+.env.*
+!.env.template
+
+# mise
+.mise.local.toml
+
+# turbo
+.turbo/
+
+# os
+.DS_Store
+
+# editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*

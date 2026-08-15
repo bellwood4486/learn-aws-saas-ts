@@ -1,0 +1,11 @@
+variable "aws_region" {
+  description = "リソースを作る AWS リージョン。"
+  type        = string
+  default     = "ap-northeast-1"
+}
+
+variable "project_name" {
+  description = "リソース名のプレフィックスとして使うプロジェクト名。"
+  type        = string
+  default     = "aws-saas-playground"
+}
