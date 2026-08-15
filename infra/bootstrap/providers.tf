@@ -3,7 +3,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project   = "aws-saas-playground"
+      Project   = "learn-aws-saas-ts"
       ManagedBy = "terraform"
       Layer     = "bootstrap"
     }

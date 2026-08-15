@@ -7,5 +7,5 @@ variable "aws_region" {
 variable "project_name" {
   description = "リソース名のプレフィックスとして使うプロジェクト名。"
   type        = string
-  default     = "aws-saas-playground"
+  default     = "learn-aws-saas-ts"
 }
