@@ -35,6 +35,11 @@ status:
         echo "=== $d ===" && (cd infra/$d && terraform show -json 2>/dev/null | grep -c '"type"' || echo "not initialized"); \
     done
 
+# SSO セッションが切れたときに再ログインする
+[group('session')]
+aws-login:
+    aws sso login --profile personal
+
 # ------------------------------------------------------------------
 # tf — 層を引数に取る Terraform 操作
 # ------------------------------------------------------------------
