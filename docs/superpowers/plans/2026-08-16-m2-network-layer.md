@@ -635,9 +635,9 @@ Task 7で作成した26リソースをdestroyする旨を提示し、明示的�
 
 - [ ] **Step 2: destroyを実行する**
 
-`tf-destroy`レシピには`[confirm(...)]`が付いている（destroy順序ガードのfix参照）ため、標準入力を2回消費する。1行目がjustのconfirmプロンプトへの回答、2行目がterraform destroy自体の確認プロンプトへの回答になる。
+`tf-destroy`レシピには`[confirm(...)]`が付いている（destroy順序ガードのfix参照）。`[confirm(...)]`は非対話的にパイプされた標準入力を渡すと、terraform destroy自体の確認プロンプト用の分も含めて残り全体を消費してしまい、`printf 'yes\nyes\n' | just tf-destroy network`のような2行パイプはterraform側で`EOF`エラーになる（実機で確認済み）。`just`の`[confirm(...)]`自体をスキップする`--yes`フラグを使い、標準入力はterraform destroyの確認プロンプト用に1行だけ渡す。
 
-Run: `printf 'yes\nyes\n' | just tf-destroy network`
+Run: `echo yes | just --yes tf-destroy network`
 Expected: `Destroy complete! Resources: 26 destroyed.`
 
 - [ ] **Step 3: leaksを確認する**
