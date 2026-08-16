@@ -198,11 +198,13 @@ AWS Prescriptive Guidance の標準構成は「1つの root module + `envs/*/ter
 | `infra/data/` | RDS PostgreSQL, subnet group, parameter group, DB 認証情報のシークレット | セッション毎・**ステートフル** | ~$0.02/h |
 | `infra/app/` | ALB, ECS cluster, task definition, service ×2, CloudWatch Logs, IAM task role / task execution role | セッション毎 | ALB $0.024/h + Fargate |
 
-各層のディレクトリ（`data.tf` は必要になった時点で追加、150行超のリソース群だけ `iam.tf` 等に分離）:
+各層のディレクトリ（`data.tf` は必要になった時点で追加）:
 
 ```
 infra/<layer>/
-├── main.tf          # リソース本体
+├── main.tf          # リソース本体（1種類のリソースにまとまる小さな層）
+│                     # 複数種類のリソースを持つ層は main.tf を置かず、
+│                     # リソース種別ごとのファイル（s3.tf, dynamodb.tf, ecr.tf 等）に分割する
 ├── variables.tf
 ├── outputs.tf       # 他層が参照する値。ARN / ID / エンドポイントのみ
 ├── providers.tf     # terraform block (backend含む) + provider block
@@ -210,7 +212,7 @@ infra/<layer>/
 └── README.md        # この層が何を作るか、他層との依存
 ```
 
-`infra/bootstrap/` はこの構造で実装済み（`aws_s3_bucket` + versioning + SSE-S3 + public access block + ownership controls、`prevent_destroy = true`）。AWS provider は `~> 6.0` を採用（実装時点の最新メジャー）。
+`infra/bootstrap/` は単一リソース種別（S3）のみなので `main.tf` にまとめて実装済み（`aws_s3_bucket` + versioning + SSE-S3 + public access block + ownership controls、`prevent_destroy = true`）。`infra/platform/` は S3/DynamoDB/SQS/ECR/Secrets Manager と複数種別を持つため、最初からリソース種別ごとのファイルに分割して実装済み（`main.tf` は存在しない）。AWS provider は `~> 6.0` を採用（実装時点の最新メジャー）。
 
 ### なぜ CloudFront を「常時起動」層に置くか
 
@@ -248,7 +250,7 @@ CloudFront を `app/` 層（セッション毎）に置きたくなるが、**�
 - provider の `default_tags` で `Project` / `ManagedBy` / `Layer` を全リソースに付与
 - workspace は使わない。環境は `dev` 単一
 - SG ルールは `aws_security_group` の `ingress`/`egress` ブロックに埋め込まず、`aws_vpc_security_group_ingress_rule` / `..._egress_rule` として1リソース＝1ルールで書く（attachment resource パターン）
-- 命名は snake_case、単数形、リソースタイプ名を名前に繰り返さない。その種類で唯一のものは `this` または `main`
+- 命名は snake_case、単数形、リソースタイプ名を名前に繰り返さない。用途がわかる名前をつける（例: `tfstate`, `app`, `items`, `items_dlq`）。`this`/`main` は使わない — その種類で唯一のリソースでも、後から読んだときに何を指すか一目でわかることを優先する
 - アカウント ID をファイルに直書きしない。`data "aws_caller_identity" "current"` を使う
 - TFLint は `infra/.tflint.hcl` で `terraform` プリセットに加え `tflint-ruleset-aws` を有効化し、AWS 固有のベストプラクティス違反を拾う
 
