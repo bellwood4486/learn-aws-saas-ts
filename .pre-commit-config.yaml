@@ -9,7 +9,7 @@ repos:
 
       - id: tflint
         name: tflint
-        entry: bash -c 'cd infra && mise exec -- tflint --recursive'
+        entry: bash -c 'cd infra && mise exec -- tflint --recursive --config "$(pwd)/.tflint.hcl"'
         language: system
         pass_filenames: false
         files: ^infra/
