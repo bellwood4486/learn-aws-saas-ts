@@ -38,7 +38,7 @@ status:
 # SSO セッションが切れたときに再ログインする
 [group('session')]
 aws-login:
-    aws sso login --profile personal
+    aws sso login
 
 # ------------------------------------------------------------------
 # tf — 層を引数に取る Terraform 操作

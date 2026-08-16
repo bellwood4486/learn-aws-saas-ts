@@ -54,6 +54,16 @@ describe('receiveMessages', () => {
 
     expect(result).toEqual([]);
   });
+
+  it('ReceiptHandle または Body が欠けている場合はエラーを投げる', async () => {
+    sqsMock.on(ReceiveMessageCommand).resolves({
+      Messages: [{ MessageId: 'msg-1' }],
+    });
+
+    await expect(receiveMessages('https://queue.example/items')).rejects.toThrow(
+      'SQS message is missing ReceiptHandle or Body',
+    );
+  });
 });
 
 describe('deleteMessage', () => {
