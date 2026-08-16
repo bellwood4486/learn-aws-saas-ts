@@ -33,6 +33,9 @@ crash.*.log
 !.vscode/extensions.json
 .idea/
 
+# claude code worktrees
+.claude/worktrees/
+
 # logs
 *.log
 npm-debug.log*

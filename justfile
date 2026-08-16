@@ -35,6 +35,11 @@ status:
         echo "=== $d ===" && (cd infra/$d && terraform show -json 2>/dev/null | grep -c '"type"' || echo "not initialized"); \
     done
 
+# SSO セッションが切れたときに再ログインする
+[group('session')]
+aws-login:
+    aws sso login
+
 # ------------------------------------------------------------------
 # tf — 層を引数に取る Terraform 操作
 # ------------------------------------------------------------------
@@ -42,12 +47,12 @@ status:
 # 指定した層で terraform plan を実行する（例: just tf-plan platform）
 [group('tf')]
 tf-plan layer:
-    cd infra/{{layer}} && terraform init -input=false && terraform plan
+    cd infra/{{layer}} && terraform init -input=false -backend-config="bucket=$(cd ../bootstrap && terraform output -raw tfstate_bucket)" && terraform plan
 
 # 指定した層で terraform apply を実行する
 [group('tf')]
 tf-apply layer:
-    cd infra/{{layer}} && terraform apply
+    cd infra/{{layer}} && terraform init -input=false -backend-config="bucket=$(cd ../bootstrap && terraform output -raw tfstate_bucket)" && terraform apply
 
 # 全層に terraform fmt をかける
 [group('tf')]
