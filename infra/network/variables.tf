@@ -10,7 +10,6 @@ variable "project_name" {
   default     = "learn-aws-saas-ts"
 }
 
-# tflint-ignore: terraform_unused_declarations
 variable "app_port" {
   description = "ECS タスクで動く api コンテナがリッスンするポート。ALB からの ingress を許可するために使う。"
   type        = number
