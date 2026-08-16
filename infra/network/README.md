@@ -26,3 +26,4 @@
 - **NAT Gateway は 1 個のみ。** private subnet 1a/1c は共通の 1 つの private route table で NAT Gateway を共有する（マルチ AZ 冗長化はしない。コスト優先の学習環境のため）
 - **`just up`/`just down` にはまだ組み込まれていない。** `infra/data`/`app`/`edge` が未実装のため。M3 で `data` の行、M4 で `app` の行、M7 で `edge` の行を段階的に追加する
 - **「なぜ private subnet に NAT が要るのか」を確かめる演習（任意・手動）:** `aws_route.private_nat` を一時的に `terraform destroy -target=aws_route.private_nat` で消し、private subnet 内のリソースからの outbound（例: NAT 経由の ECR pull）が失敗することを確認する。確認後は `just tf-apply network` で `aws_route.private_nat` を作り直す
+- **destroy 順序に注意。** `infra/data`（M3）・`infra/app`（M4）が実装され、それらが `terraform_remote_state` でこの層の SG/VPC 出力を参照するようになった後は、`just tf-destroy network` を先に実行してはいけない。SG/VPC に `DependencyViolation` で destroy が失敗し、NAT Gateway・EIP が壊れずに残って課金が続く。app/data を先に destroy してから network を壊す（将来 `just down` がこの層を組み込めば、それが安全な手順になる）。現時点（M3/M4 未実装）では `just tf-destroy network` を単独で実行して問題ない

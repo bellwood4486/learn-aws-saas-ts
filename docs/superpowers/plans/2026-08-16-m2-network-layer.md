@@ -17,7 +17,7 @@
 - providerの`default_tags`で`Project`/`ManagedBy`/`Layer`を全リソースに付与する（`Layer = "network"`）
 - backendはS3のみ、DynamoDBロックテーブルは使わない（`use_lockfile = true`）
 - SGルールは`aws_security_group`の`ingress`/`egress`ブロックに埋め込まず、`aws_vpc_security_group_ingress_rule`として1リソース＝1ルールで書く（attachment resourceパターン）
-- 明示的なegressルールは作らない。新規SGにAWSが自動付与する「全許可」のデフォルトegressルールをそのまま使う（Terraformで同内容のegressルールを明示すると`InvalidPermission.Duplicate`で失敗するため）
+- `aws_security_group`をinline`ingress`/`egress`ブロック無しで作ると、Terraformは新規SGに対してAWSが自動付与する「全許可」のデフォルトegressルールを能動的に削除する（実AWS環境で`aws ec2 describe-security-group-rules`により実証済み。`hashicorp/aws`プロバイダの公式ドキュメントにも明記）。そのため、outboundが必要なSGには`aws_vpc_security_group_egress_rule`でingressと同じattachment resourceパターンにより明示的にegressルールを用意する
 - TFLintは`infra/.tflint.hcl`を絶対パスで`--config`指定して実行する（`just tf-lint`を使えば配線済み）
 - VPCは`10.0.0.0/16`、AZは`ap-northeast-1a`/`1c`の2つ、public/private各2つを`/20`で4分割する（`10.0.0.0/20`, `10.0.16.0/20`, `10.0.32.0/20`, `10.0.48.0/20`）
 - NAT Gatewayは1個のみ（public subnet 1aに配置）。private subnet 1a/1cは共通の1つのprivate route tableでNAT Gatewayを共有する（マルチAZ冗長化はしない）
@@ -395,7 +395,7 @@ ALB→ECS→RDSの通信経路だけを許可するSGのチェーンを作る。
 
 - [ ] **Step 1: security_groups.tf を作成する**
 
-egressルールは明示せず、AWSが新規SGに自動付与する「全許可」のデフォルトルールをそのまま使う（Global Constraints参照）。
+outboundが必要なSGには`aws_vpc_security_group_egress_rule`でegressルールを明示する（Global Constraints参照。素のSGはAWSのデフォルト全許可egressルールをTerraformが削除するため）。
 
 ```hcl
 resource "aws_security_group" "alb" {
@@ -601,7 +601,7 @@ Expected: アカウント情報がJSONで返る（失効していたら`aws sso 
 - [ ] **Step 2: planを実行して内容を確認する**
 
 Run: `just tf-plan network`
-Expected: `Plan: 23 to add, 0 to change, 0 to destroy.`（VPC1 + IGW1 + subnet4 + EIP1 + NAT Gateway1 + route table2 + route2 + route table association4 + SG3 + SG ingress rule4 = 23リソース）付近の値になる。実際の数を確認し、想定外のdiffが無いことを確認する。
+Expected: `Plan: 26 to add, 0 to change, 0 to destroy.`（VPC1 + IGW1 + subnet4 + EIP1 + NAT Gateway1 + route table2 + route2 + route table association4 + SG3 + SG ingress rule4 + SG egress rule3 = 26リソース）付近の値になる。実際の数を確認し、想定外のdiffが無いことを確認する。
 
 - [ ] **Step 3: ユーザーにplan内容を提示し、applyの承認を得る**
 
@@ -610,7 +610,7 @@ planの要約（作成されるリソース一覧、想定コスト ~$0.6/セッ
 - [ ] **Step 4: applyを実行する**
 
 Run: `echo yes | just tf-apply network`
-Expected: `Apply complete! Resources: 23 added, 0 changed, 0 destroyed.`
+Expected: `Apply complete! Resources: 26 added, 0 changed, 0 destroyed.`
 
 - [ ] **Step 5: outputsを確認する**
 
@@ -631,12 +631,14 @@ network層はセッション毎に作り直す層であることを実際のdest
 
 - [ ] **Step 1: ユーザーにdestroy対象を提示し、承認を得る**
 
-Task 7で作成した23リソースをdestroyする旨を提示し、明示的な「はい」を得るまで次のステップに進まない。
+Task 7で作成した26リソースをdestroyする旨を提示し、明示的な「はい」を得るまで次のステップに進まない。
 
 - [ ] **Step 2: destroyを実行する**
 
-Run: `echo yes | just tf-destroy network`
-Expected: `Destroy complete! Resources: 23 destroyed.`
+`tf-destroy`レシピには`[confirm(...)]`が付いている（destroy順序ガードのfix参照）ため、標準入力を2回消費する。1行目がjustのconfirmプロンプトへの回答、2行目がterraform destroy自体の確認プロンプトへの回答になる。
+
+Run: `printf 'yes\nyes\n' | just tf-destroy network`
+Expected: `Destroy complete! Resources: 26 destroyed.`
 
 - [ ] **Step 3: leaksを確認する**
 
@@ -648,7 +650,7 @@ Expected: `describe-nat-gateways`と`describe-addresses`の出力に、このセ
 session毎に作り直せることを確認するため、もう一度applyしてoutputsが問題なく出ることを確認する。
 
 Run: `echo yes | just tf-apply network && cd infra/network && mise exec -- terraform output`
-Expected: `Apply complete! Resources: 23 added, 0 changed, 0 destroyed.`のあと、outputsが再び表示される。
+Expected: `Apply complete! Resources: 26 added, 0 changed, 0 destroyed.`のあと、outputsが再び表示される。
 
 - [ ] **Step 5: 最終状態をユーザーに確認する**
 

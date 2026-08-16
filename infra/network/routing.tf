@@ -8,12 +8,15 @@ resource "aws_eip" "nat" {
 
 resource "aws_nat_gateway" "app" {
   allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public_1a.id
+  # NAT Gatewayは1個のみ。private subnet 1a/1cで共有する（コスト優先、マルチAZ冗長化はしない）。
+  subnet_id = aws_subnet.public_1a.id
 
   tags = {
     Name = "${var.project_name}-app"
   }
 
+  # IGWがVPCにアタッチされる前だとNAT Gateway作成が失敗しうる。
+  # 両者に直接の属性参照が無いため、明示的にdepends_onで順序を強制する。
   depends_on = [aws_internet_gateway.app]
 }
 

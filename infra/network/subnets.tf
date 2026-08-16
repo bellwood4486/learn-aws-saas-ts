@@ -1,7 +1,8 @@
 resource "aws_subnet" "public_1a" {
-  vpc_id                  = aws_vpc.app.id
-  cidr_block              = "10.0.0.0/20"
-  availability_zone       = "${var.aws_region}a"
+  vpc_id            = aws_vpc.app.id
+  cidr_block        = "10.0.0.0/20"
+  availability_zone = "${var.aws_region}a"
+  # 将来この subnet に置くリソース（bastion等の検証用インスタンス）が自動でパブリックIPを持てるようにする。
   map_public_ip_on_launch = true
 
   tags = {
@@ -10,9 +11,10 @@ resource "aws_subnet" "public_1a" {
 }
 
 resource "aws_subnet" "public_1c" {
-  vpc_id                  = aws_vpc.app.id
-  cidr_block              = "10.0.16.0/20"
-  availability_zone       = "${var.aws_region}c"
+  vpc_id            = aws_vpc.app.id
+  cidr_block        = "10.0.16.0/20"
+  availability_zone = "${var.aws_region}c"
+  # 将来この subnet に置くリソース（bastion等の検証用インスタンス）が自動でパブリックIPを持てるようにする。
   map_public_ip_on_launch = true
 
   tags = {
