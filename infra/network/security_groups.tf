@@ -1,6 +1,6 @@
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-alb"
-  description = "ALB 用。インターネットから HTTP/HTTPS を受け付ける。"
+  description = "Security group for ALB. Allows HTTP/HTTPS from the internet."
   vpc_id      = aws_vpc.app.id
 
   tags = {
@@ -26,7 +26,7 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
 
 resource "aws_security_group" "ecs" {
   name        = "${var.project_name}-ecs"
-  description = "ECS タスク用。ALB からのみアプリポートを受け付ける。"
+  description = "Security group for ECS tasks. Allows the app port from ALB only."
   vpc_id      = aws_vpc.app.id
 
   tags = {
@@ -44,7 +44,7 @@ resource "aws_vpc_security_group_ingress_rule" "ecs_from_alb" {
 
 resource "aws_security_group" "rds" {
   name        = "${var.project_name}-rds"
-  description = "RDS 用。ECS タスクからのみ PostgreSQL ポートを受け付ける。"
+  description = "Security group for RDS. Allows PostgreSQL from ECS tasks only."
   vpc_id      = aws_vpc.app.id
 
   tags = {
