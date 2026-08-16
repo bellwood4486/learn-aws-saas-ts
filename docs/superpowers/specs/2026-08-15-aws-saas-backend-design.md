@@ -195,7 +195,7 @@ AWS Prescriptive Guidance の標準構成は「1つの root module + `envs/*/ter
 | `infra/platform/` | アプリ用 S3, DynamoDB, SQS+DLQ, ECR, アプリ用シークレット, Cognito, GitHub OIDC provider/role | **常時起動** | ~$1/月 |
 | `infra/edge/` | フロント配信用 S3, **CloudFront（2オリジン）** | **常時起動** | ~$0（時間課金なし） |
 | `infra/network/` | VPC, public/private subnet ×2AZ, IGW, NAT GW, route table, SG | セッション毎 | NAT $0.062/h + EIP $0.005/h |
-| `infra/data/` | RDS PostgreSQL, subnet group, parameter group, DB 認証情報のシークレット | セッション毎・**ステートフル** | ~$0.02/h |
+| `infra/data/` | RDS PostgreSQL, subnet group, parameter group, DB 認証情報のシークレット, SSM 踏み台用 EC2/IAM ロール | セッション毎・**ステートフル**（RDS のみ。踏み台 EC2 はステートレス） | ~$0.02/h（RDS）+ 踏み台 t4g.nano 分（僅少） |
 | `infra/app/` | ALB, ECS cluster, task definition, service ×2, CloudWatch Logs, IAM task role / task execution role | セッション毎 | ALB $0.024/h + Fargate |
 
 各層のディレクトリ（`data.tf` は必要になった時点で追加）:
@@ -457,16 +457,30 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 **M2: network 層 — apply/destroy サイクルを体で覚える**
 - VPC `10.0.0.0/16`（`ap-northeast-1a` / `1c` の2AZ）。public/private 各2つ、`/20` で4分割（`10.0.0.0/20`, `10.0.16.0/20`, `10.0.32.0/20`, `10.0.48.0/20`）
 - NAT Gateway ×1（public subnet 1a に配置、EIP付き）。private subnet 1a/1c は共通の1つの private route table で NAT GW を共有する（コスト最優先。マルチAZ冗長化はしない）
-- SG は ALB用/ECS用/RDS用の3つをこの層でまとめて作り、SG ID 同士の参照でチェーンを組む: `alb`（80/443 from `0.0.0.0/0`）→ `ecs`（`var.app_port`=3000 from `alb` SG）→ `rds`（5432 from `ecs` SG）。ALB/ECS/RDS 自体のリソースは M3/M4 で作るが、SG という「箱」と ingress ルールは VPC の一部としてここに置く
+- SG は ALB用/ECS用/RDS用の3つをこの層でまとめて作り、SG ID 同士の参照でチェーンを組む: `alb`（80/443 from `0.0.0.0/0`）→ `ecs`（`var.app_port`=3000 from `alb` SG）→ `rds`（5432 from `ecs` SG）。ALB/ECS/RDS 自体のリソースは M3/M4 で作るが、SG という「箱」と ingress ルールは VPC の一部としてここに置く（M3 で SSM 踏み台用の `bastion` SG と `rds` への追加 ingress ルールをこの層に追加する。詳細は「M3: data 層」節）
 - ファイル構成は `infra/platform/` に倣いリソース種別ごとに分割（`vpc.tf` / `subnets.tf` / `routing.tf` / `security_groups.tf`）。命名は `this`/`main` を使わず用途名（`app`, `alb`, `ecs`, `rds` 等）
 - outputs: `vpc_id` / `public_subnet_ids` / `private_subnet_ids` / `alb_security_group_id` / `ecs_security_group_id` / `rds_security_group_id` / `nat_gateway_id` / `aws_region`
 - `just up` / `just down` は `network → data → app → edge` の4層を前提にしており、`data`/`app`/`edge` が未実装の現時点では動かせない。M2 では新規追加する単層コマンド `just tf-apply network` / `just tf-destroy network` で検証する。`up`/`down` への組み込みはレイヤーが揃うにつれ段階的に行う（M3 で `data` の行を追加、M4 で `app` の行を追加してバックエンドまで通しで動くようになり、M7 で `edge` の行を追加して完成する）
 - 「なぜ private subnet に NAT が要るのか」を、private route table の `0.0.0.0/0` ルートを一時的に外して実際に確かめる（README.md に手順を記載。自動化はしない）
 
 **M3: data 層 — RDS**
-- PostgreSQL db.t4g.micro、`random_password` + Secrets Manager（recovery window 0）
-- SSM Session Manager のポートフォワードで接続
-- Drizzle でスキーマ定義 → `drizzle-kit generate` → migration 適用、seed で初期データ
+
+PostgreSQL `db.t4g.micro`、`random_password` + Secrets Manager（recovery window 0）、SSM Session Manager のポートフォワードで接続、Drizzle でスキーマ定義 → `drizzle-kit generate` → migration 適用、seed で初期データ。
+
+**SSM 踏み台（bastion）が必須**: `AWS-StartPortForwardingSessionToRemoteHost` は SSM 管理下のインスタンスを起点に任意の `host:port` へフォワードする仕組みで、RDS 自体は SSM 管理ノードになれない。ECS Exec も interactive command のみでポートフォワードに対応しないため、M4（ECS）を待つ選択肢もない。**t4g.nano の EC2 を `infra/data/` に session 毎リソースとして追加する**（IAM ロールは `AmazonSSMManagedInstanceCore` のみ、SSH 鍵なし、パブリック IP なし、private subnet 配置。SSM Agent の通信は既存の NAT Gateway 経由 — VPC エンドポイントは M9 で比較対象として温存する）。
+
+- **bastion の配置**: 実体（EC2・IAM ロール・instance profile）は `infra/data/`（RDS 接続専用でライフサイクルが一致するため）。SG という「箱」は M2 の慣習どおり `infra/network/security_groups.tf` に追加する（`aws_security_group.bastion` + `rds` への ingress ルール追加）。ingress は不要（SSM Agent は自分から接続しに行くだけ）、egress は 443 のみ許可（`ecs_https` と同じ理由）
+- **AMI**: Amazon Linux 2023 arm64（t4g と同じ Graviton）。`data.aws_ami` の name filter ではなく、AWS が SSM Parameter Store で公開する最新 AMI ID（`/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`）を参照する。命名規則変更に強く、常に最新
+- **PostgreSQL バージョン**: `engine_version = "17"`（メジャーのみ固定、マイナーは AWS に任せる）。`db.t4g.micro` は 12〜18 系まで対応済みだが、17 系は実績のある安定版を選ぶ（TypeScript 5.9 系採用と同じ判断基準）
+- **parameter group**: `aws_db_parameter_group.app`（family `postgres17`）に `rds.force_ssl = 1` を設定し、クライアント接続の TLS を強制する。空の箱にしない
+- **暗号化**: `aws_db_instance.app` に `storage_encrypted = true`（デフォルトの AWS 管理キー、追加コストなし）
+- **命名**: `username = "app"` / `db_name = "app"`（`admin`/`postgres` のような推測されやすい名前を避ける）。`identifier = "${var.project_name}-app"`（他層の `aws_vpc.app` 等と同じ命名慣習）
+- **秘匿情報**: Secrets Manager には `{host, port, dbname, username, password}` の JSON を格納する。`random_password` で生成し **`ignore_changes` は付けない**（`infra/platform/secrets.tf` の `ignore_changes = [secret_string]` は手動投入値を Terraform に上書きさせないためのものだが、ここは `random_password` が Terraform 管理下にあり Terraform 側が正なので、`ignore_changes` を付けるとローテーション後に古いパスワードで固定されてしまう）
+- **`random_password` の記号制約**: RDS のマスターパスワードは `/`・`@`・`"`・スペースを禁止する。デフォルトの `override_special` にはこれらが含まれるため、`override_special = "!#$%^&*()-_=+[]{}<>:?"` のように明示的に除外する（`terraform validate` は通るが `apply` 時に失敗する典型パターン）
+- **`db-psql` の接続手順**: `terraform output` で取得した `bastion_instance_id` と RDS エンドポイントを使い、`aws ssm start-session --target <bastion_instance_id> --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters host=<rds_endpoint>,portNumber=5432,localPortNumber=5432` でトンネルを張り、別ターミナルで `PGSSLMODE=require psql -h localhost -p 5432 -U app -d app` で接続する（`verify-full` は RDS の CA 証明書バンドル取得が要るため採らない。`require` で経路暗号化のみ担保する現実的な落とし所）
+- **`manage_master_user_password` を採らない理由**（再掲）: RDS が所有するシークレットは Terraform リソースとして持てず recovery window を制御できないため、`just down` のたびに削除待ちシークレットが残り続ける恐れがある。`random_password` + 自前の `aws_secretsmanager_secret`（recovery window 0）なら destroy で確実に消え、状態が決定的になる
+- **`just up`/`just down` は既に `data` 層を組み込み済み**（M0 時点でスケルトンとして先に書かれていた）。M3 で `infra/data/` を実装すれば通しで動くようになる
+- **`just leaks` に `aws ec2 describe-instances` を追加**（消し忘れた bastion の t4g.nano を検知対象にする。忘れると ~$3/月）
 
 **M4: app 層 — バックエンドが全部繋がる**
 - `turbo prune` → Docker ビルド → ECR push → ECS Fargate で api / worker 起動 → ALB 経由でアクセス
