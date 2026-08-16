@@ -70,7 +70,7 @@ tf-validate:
 # infra 全体に TFLint をかける
 [group('tf')]
 tf-lint:
-    cd infra && tflint --recursive
+    cd infra && tflint --recursive --config "$(pwd)/.tflint.hcl"
 
 # ------------------------------------------------------------------
 # dev — ローカル開発サーバ
