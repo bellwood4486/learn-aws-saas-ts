@@ -54,6 +54,12 @@ tf-plan layer:
 tf-apply layer:
     cd infra/{{layer}} && terraform init -input=false -backend-config="bucket=$(cd ../bootstrap && terraform output -raw tfstate_bucket)" && terraform apply
 
+# 指定した層で terraform destroy を実行する（セッション毎レイヤー用）
+[group('tf')]
+[confirm('本当に指定した層の全リソースを destroy しますか？')]
+tf-destroy layer:
+    cd infra/{{layer}} && terraform init -input=false -backend-config="bucket=$(cd ../bootstrap && terraform output -raw tfstate_bucket)" && terraform destroy
+
 # 全層に terraform fmt をかける
 [group('tf')]
 tf-fmt:
