@@ -455,9 +455,13 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 - **ここまで VPC も ALB も RDS も要らない。学びたい6要素のうち4つがこの時点で終わる**
 
 **M2: network 層 — apply/destroy サイクルを体で覚える**
-- VPC / subnet / IGW / NAT GW / route table / SG
-- `just up` / `just down` / `just leaks` を整える
-- 「なぜ private subnet に NAT が要るのか」を実際に外して確かめる
+- VPC `10.0.0.0/16`（`ap-northeast-1a` / `1c` の2AZ）。public/private 各2つ、`/20` で4分割（`10.0.0.0/20`, `10.0.16.0/20`, `10.0.32.0/20`, `10.0.48.0/20`）
+- NAT Gateway ×1（public subnet 1a に配置、EIP付き）。private subnet 1a/1c は共通の1つの private route table で NAT GW を共有する（コスト最優先。マルチAZ冗長化はしない）
+- SG は ALB用/ECS用/RDS用の3つをこの層でまとめて作り、SG ID 同士の参照でチェーンを組む: `alb`（80/443 from `0.0.0.0/0`）→ `ecs`（`var.app_port`=3000 from `alb` SG）→ `rds`（5432 from `ecs` SG）。ALB/ECS/RDS 自体のリソースは M3/M4 で作るが、SG という「箱」と ingress ルールは VPC の一部としてここに置く
+- ファイル構成は `infra/platform/` に倣いリソース種別ごとに分割（`vpc.tf` / `subnets.tf` / `routing.tf` / `security_groups.tf`）。命名は `this`/`main` を使わず用途名（`app`, `alb`, `ecs`, `rds` 等）
+- outputs: `vpc_id` / `public_subnet_ids` / `private_subnet_ids` / `alb_security_group_id` / `ecs_security_group_id` / `rds_security_group_id` / `nat_gateway_id` / `aws_region`
+- `just up` / `just down` は `network → data → app → edge` の4層を前提にしており、`data`/`app`/`edge` が未実装の現時点では動かせない。M2 では新規追加する単層コマンド `just tf-apply network` / `just tf-destroy network` で検証する。`up`/`down` への組み込みはレイヤーが揃うにつれ段階的に行う（M3 で `data` の行を追加、M4 で `app` の行を追加してバックエンドまで通しで動くようになり、M7 で `edge` の行を追加して完成する）
+- 「なぜ private subnet に NAT が要るのか」を、private route table の `0.0.0.0/0` ルートを一時的に外して実際に確かめる（README.md に手順を記載。自動化はしない）
 
 **M3: data 層 — RDS**
 - PostgreSQL db.t4g.micro、`random_password` + Secrets Manager（recovery window 0）
@@ -522,7 +526,7 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 
 - **M0** — `just --list` がグループ付きで出る（確認済み）。`just test` と `just typecheck` が緑（確認済み）。`just tf-validate` が通る（確認済み）。ゲート①②の結論が本ドキュメントに書かれている（本節）
 - **M1** — ローカルから S3 put / DynamoDB put / SQS send-receive / Secrets Manager get が成功する
-- **M2** — `just up` → `terraform output` で subnet ID が出る → `just down` → `just leaks` が全てゼロ件
+- **M2** — `just tf-apply network` → `terraform output` で subnet ID が出る → `just tf-destroy network` → `just leaks` が全てゼロ件
 - **M3** — SSM ポートフォワード経由で psql が繋がり、Drizzle の migration 済みテーブルが見える
 - **M4** — ALB の DNS 名に `curl -X POST /api/items` して 201、RDS/DynamoDB/S3 の3箇所に反映され、worker のログに処理完了が出る
 - **M5** — JWT なしで 401、Cognito 発行の JWT ありで 201（`aws cognito-idp admin-initiate-auth` でトークン取得）
