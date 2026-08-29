@@ -86,3 +86,44 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_ecs" {
   to_port                      = 5432
   ip_protocol                  = "tcp"
 }
+
+resource "aws_security_group" "bastion" {
+  name        = "${var.project_name}-bastion"
+  description = "Security group for the SSM bastion host. No ingress; SSM Agent dials out."
+  vpc_id      = aws_vpc.app.id
+
+  tags = {
+    Name = "${var.project_name}-bastion"
+  }
+}
+
+# ingress は無い。SSM Session Manager は Agent 側から HTTPS で接続しに行くだけなので、
+# 踏み台に対する inbound は一切不要（SSH 鍵も踏み台への 22 番も持たない）。
+
+# SSM Agent が ssm/ssmmessages/ec2messages エンドポイントへ到達するため（NAT Gateway 経由）。
+resource "aws_vpc_security_group_egress_rule" "bastion_https" {
+  security_group_id = aws_security_group.bastion.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+}
+
+# AWS-StartPortForwardingSessionToRemoteHost は踏み台を起点に RDS へ TCP を張る。
+# 素の aws_security_group はデフォルト全許可 egress が削除されるため、
+# この 5432 egress が無いとポートフォワードがタイムアウトする。
+resource "aws_vpc_security_group_egress_rule" "bastion_to_rds" {
+  security_group_id            = aws_security_group.bastion.id
+  referenced_security_group_id = aws_security_group.rds.id
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "rds_from_bastion" {
+  security_group_id            = aws_security_group.rds.id
+  referenced_security_group_id = aws_security_group.bastion.id
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+}
