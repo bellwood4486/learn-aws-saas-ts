@@ -9,7 +9,10 @@ resource "aws_db_subnet_group" "app" {
 }
 
 # 空の箱にせず、クライアント接続の TLS を強制する。
-# rds.force_ssl は静的パラメータなので apply_method = "pending-reboot"（新規作成時はそのまま有効になる）。
+# rds.force_ssl は動的パラメータ（aws rds describe-db-parameters の ApplyType: dynamic）なので
+# apply_method = "immediate" で即時反映できる。PostgreSQL 16 以降はエンジン既定値が既に 1 のため、
+# この設定は挙動を変えるものではなく意図を明示するためのもの。そのため describe-db-parameters
+# --source user は空リストを返す（既定値と同じ値を設定した場合の正しい挙動）。
 resource "aws_db_parameter_group" "app" {
   name        = "${var.project_name}-app"
   description = "Parameter group for the app database. Forces TLS."
@@ -18,7 +21,7 @@ resource "aws_db_parameter_group" "app" {
   parameter {
     name         = "rds.force_ssl"
     value        = "1"
-    apply_method = "pending-reboot"
+    apply_method = "immediate"
   }
 
   tags = {

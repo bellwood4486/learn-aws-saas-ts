@@ -463,26 +463,27 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 - `just up` / `just down` は `network → data → app → edge` の4層を前提にしており、`data`/`app`/`edge` が未実装の現時点では動かせない。M2 では新規追加する単層コマンド `just tf-apply network` / `just tf-destroy network` で検証する。`up`/`down` への組み込みはレイヤーが揃うにつれ段階的に行う（M3 で `data` の行を追加、M4 で `app` の行を追加してバックエンドまで通しで動くようになり、M7 で `edge` の行を追加して完成する）
 - 「なぜ private subnet に NAT が要るのか」を、private route table の `0.0.0.0/0` ルートを一時的に外して実際に確かめる（README.md に手順を記載。自動化はしない）
 
-**M3: data 層 — RDS**
+**M3: data 層 — RDS — 完了**
 
-PostgreSQL `db.t4g.micro`、`random_password` + Secrets Manager（recovery window 0）、SSM Session Manager のポートフォワードで接続、Drizzle でスキーマ定義 → `drizzle-kit generate` → migration 適用、seed で初期データ。
+- ✅ PostgreSQL `db.t4g.micro`、`random_password` + Secrets Manager（recovery window 0）、SSM Session Manager のポートフォワードで接続、Drizzle でスキーマ定義 → `drizzle-kit generate` → migration 適用、seed で初期データ
 
 **SSM 踏み台（bastion）が必須**: `AWS-StartPortForwardingSessionToRemoteHost` は SSM 管理下のインスタンスを起点に任意の `host:port` へフォワードする仕組みで、RDS 自体は SSM 管理ノードになれない。ECS Exec も interactive command のみでポートフォワードに対応しないため、M4（ECS）を待つ選択肢もない。**t4g.nano の EC2 を `infra/data/` に session 毎リソースとして追加する**（IAM ロールは `AmazonSSMManagedInstanceCore` のみ、SSH 鍵なし、パブリック IP なし、private subnet 配置。SSM Agent の通信は既存の NAT Gateway 経由 — VPC エンドポイントは M9 で比較対象として温存する）。
 
-- **bastion の配置**: 実体（EC2・IAM ロール・instance profile）は `infra/data/`（RDS 接続専用でライフサイクルが一致するため）。SG という「箱」は M2 の慣習どおり `infra/network/security_groups.tf` に追加する（`aws_security_group.bastion` + `rds` への ingress ルール追加）。ingress は不要（SSM Agent は自分から接続しに行くだけ）、egress は 443 のみ許可（`ecs_https` と同じ理由）
-- **AMI**: Amazon Linux 2023 arm64（t4g と同じ Graviton）。`data.aws_ami` の name filter ではなく、AWS が SSM Parameter Store で公開する最新 AMI ID（`/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`）を参照する。命名規則変更に強く、常に最新
-- **PostgreSQL バージョン**: `engine_version = "17"`（メジャーのみ固定、マイナーは AWS に任せる）。`db.t4g.micro` は 12〜18 系まで対応済みだが、17 系は実績のある安定版を選ぶ（TypeScript 5.9 系採用と同じ判断基準）
-- **parameter group**: `aws_db_parameter_group.app`（family `postgres17`）に `rds.force_ssl = 1` を設定し、クライアント接続の TLS を強制する。空の箱にしない
-- **暗号化**: `aws_db_instance.app` に `storage_encrypted = true`（デフォルトの AWS 管理キー、追加コストなし）
-- **命名**: `username = "app"` / `db_name = "app"`（`admin`/`postgres` のような推測されやすい名前を避ける）。`identifier = "${var.project_name}-app"`（他層の `aws_vpc.app` 等と同じ命名慣習）
-- **秘匿情報**: Secrets Manager には `{host, port, dbname, username, password}` の JSON を格納する。`random_password` で生成し **`ignore_changes` は付けない**（`infra/platform/secrets.tf` の `ignore_changes = [secret_string]` は手動投入値を Terraform に上書きさせないためのものだが、ここは `random_password` が Terraform 管理下にあり Terraform 側が正なので、`ignore_changes` を付けるとローテーション後に古いパスワードで固定されてしまう）
-- **`random_password` の記号制約**: RDS のマスターパスワードは `/`・`@`・`"`・スペースを禁止する。デフォルトの `override_special` にはこれらが含まれるため、`override_special = "!#$%^&*()-_=+[]{}<>:?"` のように明示的に除外する（`terraform validate` は通るが `apply` 時に失敗する典型パターン）
-- **`db-psql` の接続手順**: `terraform output` で取得した `bastion_instance_id` と RDS エンドポイントを使い、`aws ssm start-session --target <bastion_instance_id> --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters host=<rds_endpoint>,portNumber=5432,localPortNumber=5432` でトンネルを張り、別ターミナルで `PGSSLMODE=require psql -h localhost -p 5432 -U app -d app` で接続する（`verify-full` は RDS の CA 証明書バンドル取得が要るため採らない。`require` で経路暗号化のみ担保する現実的な落とし所）
-- **Node（Drizzle）側は `sslmode=require` ではなく `sslmode=no-verify` を使う**: pg（node-postgres）は接続文字列の `sslmode` で明示的な ssl オプションを上書きする実装のため、`require` を渡すと証明書検証ありに解決され、SSM トンネル越しの `localhost` 接続が証明書・ホスト名検証で必ず失敗する。`no-verify` は pg-connection-string 拡張で `rejectUnauthorized: false` 相当（psql/libpq は `no-verify` を解さないため、`db-psql` だけは上記の `PGSSLMODE=require` を使う）
-- **`session-manager-plugin` は mise の管轄外**: `aws ssm start-session`（`just db-tunnel`）は AWS CLI 本体とは別のプラグインバイナリを要求する。`mise.toml` の `awscli` パッケージはこれを含まないため、`mise install` だけでは足りず `brew install --cask session-manager-plugin` の個別インストールが要る（未インストールだと `SessionManagerPlugin is not found` で落ちる）
-- **`manage_master_user_password` を採らない理由**（再掲）: RDS が所有するシークレットは Terraform リソースとして持てず recovery window を制御できないため、`just down` のたびに削除待ちシークレットが残り続ける恐れがある。`random_password` + 自前の `aws_secretsmanager_secret`（recovery window 0）なら destroy で確実に消え、状態が決定的になる
-- **`just up`/`just down` は既に `data` 層を組み込み済み**（M0 時点でスケルトンとして先に書かれていた）。M3 で `infra/data/` を実装すれば通しで動くようになる
-- **`just leaks` に `aws ec2 describe-instances` を追加**（消し忘れた bastion の t4g.nano を検知対象にする。忘れると ~$3/月）
+- ✅ **bastion の配置**: 実体（EC2・IAM ロール・instance profile）は `infra/data/`（RDS 接続専用でライフサイクルが一致するため）。SG という「箱」は M2 の慣習どおり `infra/network/security_groups.tf` に追加する（`aws_security_group.bastion` + `rds` への ingress ルール追加）。ingress は不要（SSM Agent は自分から接続しに行くだけ）、egress は 443 のみ許可（`ecs_https` と同じ理由）。実機検証では `tf-apply data` 完了直後に `aws ssm describe-instance-information` 上で `Online` になっており、待機は不要だった
+- ✅ **AMI**: Amazon Linux 2023 arm64（t4g と同じ Graviton）。`data.aws_ami` の name filter ではなく、AWS が SSM Parameter Store で公開する最新 AMI ID（`/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`）を参照する。命名規則変更に強く、常に最新
+- ✅ **PostgreSQL バージョン**: `engine_version = "17"`（メジャーのみ固定、マイナーは AWS に任せる）。`db.t4g.micro` は 12〜18 系まで対応済みだが、17 系は実績のある安定版を選ぶ（TypeScript 5.9 系採用と同じ判断基準）
+- ✅ **parameter group**: `aws_db_parameter_group.app`（family `postgres17`）に `rds.force_ssl = 1` を設定し、クライアント接続の TLS を強制する。空の箱にしない。実機で `aws rds describe-db-parameters` を確認したところ `rds.force_ssl` は静的パラメータではなく動的パラメータ（`ApplyType: dynamic`）で、`apply_method = "immediate"` で即時反映できる。また PostgreSQL 16 以降はエンジン既定値が既に `1` のため、`--source user` で見ると空リストになる（既定値と同じ値を設定した場合の正しい挙動）。TLS 強制の効果は `SHOW rds.force_ssl`（セッション内では `unrecognized configuration parameter` になり使えない）ではなく、`sslmode=disable` での接続が `no pg_hba.conf entry ... no encryption` で拒否されることを実地で確認した
+- ✅ **暗号化**: `aws_db_instance.app` に `storage_encrypted = true`（デフォルトの AWS 管理キー、追加コストなし）
+- ✅ **命名**: `username = "app"` / `db_name = "app"`（`admin`/`postgres` のような推測されやすい名前を避ける）。`identifier = "${var.project_name}-app"`（他層の `aws_vpc.app` 等と同じ命名慣習）
+- ✅ **秘匿情報**: Secrets Manager には `{host, port, dbname, username, password}` の JSON を格納する。`random_password` で生成し **`ignore_changes` は付けない**（`infra/platform/secrets.tf` の `ignore_changes = [secret_string]` は手動投入値を Terraform に上書きさせないためのものだが、ここは `random_password` が Terraform 管理下にあり Terraform 側が正なので、`ignore_changes` を付けるとローテーション後に古いパスワードで固定されてしまう）
+- ✅ **`random_password` の記号制約**: RDS のマスターパスワードは `/`・`@`・`"`・スペースを禁止する。デフォルトの `override_special` にはこれらが含まれるため、`override_special = "!#$%^&*()-_=+[]{}<>:?"` のように明示的に除外する（`terraform validate` は通るが `apply` 時に失敗する典型パターン）
+- ✅ **`db-psql` の接続手順**: `terraform output` で取得した `bastion_instance_id` と RDS エンドポイントを使い、`aws ssm start-session --target <bastion_instance_id> --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters host=<rds_endpoint>,portNumber=5432,localPortNumber=5432` でトンネルを張り、別ターミナルで `PGSSLMODE=require psql -h localhost -p 5432 -U app -d app` で接続する（`verify-full` は RDS の CA 証明書バンドル取得が要るため採らない。`require` で経路暗号化のみ担保する現実的な落とし所）
+- ✅ **Node（Drizzle）側は `sslmode=require` ではなく `sslmode=no-verify` を使う**: pg（node-postgres）は接続文字列の `sslmode` で明示的な ssl オプションを上書きする実装のため、`require` を渡すと証明書検証ありに解決され、SSM トンネル越しの `localhost` 接続が証明書・ホスト名検証で必ず失敗する。`no-verify` は pg-connection-string 拡張で `rejectUnauthorized: false` 相当（psql/libpq は `no-verify` を解さないため、`db-psql` だけは上記の `PGSSLMODE=require` を使う）
+- ✅ **`session-manager-plugin` は mise の管轄外**: `aws ssm start-session`（`just db-tunnel`）は AWS CLI 本体とは別のプラグインバイナリを要求する。`mise.toml` の `awscli` パッケージはこれを含まないため、`mise install` だけでは足りず `brew install --cask session-manager-plugin` の個別インストールが要る（未インストールだと `SessionManagerPlugin is not found` で落ちる）
+- ✅ **`manage_master_user_password` を採らない理由**（再掲）: RDS が所有するシークレットは Terraform リソースとして持てず recovery window を制御できないため、`just down` のたびに削除待ちシークレットが残り続ける恐れがある。`random_password` + 自前の `aws_secretsmanager_secret`（recovery window 0）なら destroy で確実に消え、状態が決定的になる。実機検証でも destroy 後の `just leaks` に削除待ちの DB シークレットは残らなかった
+- ✅ **`just up`/`just down` は既に `data` 層を組み込み済み**（M0 時点でスケルトンとして先に書かれていた）。M3 で `infra/data/` を実装し、通しで動くことを確認した
+- ✅ **`just leaks` に `aws ec2 describe-instances` を追加**（消し忘れた bastion の t4g.nano を検知対象にする。忘れると ~$3/月）。実機検証の destroy 後は NatGateways/Reservations/Addresses/LoadBalancers/DBInstances がすべて空で、残っていたのは platform 層の常設シークレットのみだった
+- ✅ 実機検証: `just tf-apply network` が30リソース、`just tf-apply data` が10リソースを作成（RDS 作成が ~7分で支配的）。`just db-migrate` → `just db-seed`（`seeded 2 items`）→ `just db-check`（`items rows: 2`）が成功し、`db-seed` の再実行でも件数は増えない idempotent な挙動を確認。`just --yes tf-destroy data` で10リソース、`just --yes tf-destroy network` で30リソースを破棄
 
 **M4: app 層 — バックエンドが全部繋がる**
 - `turbo prune` → Docker ビルド → ECR push → ECS Fargate で api / worker 起動 → ALB 経由でアクセス
@@ -543,7 +544,7 @@ PostgreSQL `db.t4g.micro`、`random_password` + Secrets Manager（recovery windo
 - **M0** — `just --list` がグループ付きで出る（確認済み）。`just test` と `just typecheck` が緑（確認済み）。`just tf-validate` が通る（確認済み）。ゲート①②の結論が本ドキュメントに書かれている（本節）
 - **M1** — ローカルから S3 put / DynamoDB put / SQS send-receive / Secrets Manager get が成功する
 - **M2** — `just tf-apply network` → `terraform output` で subnet ID が出る → `just tf-destroy network` → `just leaks` が全てゼロ件
-- **M3** — SSM ポートフォワード経由で psql が繋がり、Drizzle の migration 済みテーブルが見える
+- **M3** — SSM ポートフォワード経由で psql が繋がり、Drizzle の migration 済みテーブルが見える（確認済み。`items` テーブルが見え、migration 管理テーブル `__drizzle_migrations` は `drizzle` スキーマにあるため `table_schema = 'public'` 前提の一覧には出ない）
 - **M4** — ALB の DNS 名に `curl -X POST /api/items` して 201、RDS/DynamoDB/S3 の3箇所に反映され、worker のログに処理完了が出る
 - **M5** — JWT なしで 401、Cognito 発行の JWT ありで 201（`aws cognito-idp admin-initiate-auth` でトークン取得）
 - **M6** — `just dev-all`（ローカル api + Vite）でブラウザから作成・一覧ができ、ログイン／ログアウトが動く
