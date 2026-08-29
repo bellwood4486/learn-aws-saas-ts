@@ -152,7 +152,7 @@ db-url:
     @aws secretsmanager get-secret-value \
         --secret-id "$(cd infra/data && terraform output -raw db_secret_name)" \
         --query SecretString --output text \
-    | node -e 'let s="";process.stdin.on("data",d=>{s+=d}).on("end",()=>{const v=JSON.parse(s);process.stdout.write("postgres://"+v.username+":"+encodeURIComponent(v.password)+"@localhost:5432/"+v.dbname+"?sslmode=require\n")})'
+    | pnpm --filter @repo/core exec node src/db/url.ts
 
 # 生成済みの migration を RDS に適用する（db-tunnel を別ターミナルで開いておくこと）
 [group('db')]
@@ -170,9 +170,12 @@ db-check:
     DATABASE_URL="$(just db-url)" pnpm --filter @repo/core exec node src/db/check.ts
 
 # psql で接続する（別ターミナルで just db-tunnel を開いておくこと。psql は mise 管理外）
+# db-url が返す sslmode=no-verify は libpq（psql）にとって未知の値でエラーになるため使えない。
+# 代わりに PGSSLMODE=require で接続する（別ターミナルで just db-tunnel を開いておくこと。psql は mise 管理外）。
+# psql はパスワード入力を対話プロンプトで求めてくる。パスワードは Secrets Manager にあり、`just db-url` が出す URL にも含まれている
 [group('db')]
 db-psql:
-    psql "$(just db-url)"
+    PGSSLMODE=require psql -h localhost -p 5432 -U app -d app
 
 # ------------------------------------------------------------------
 # docker — turbo prune → build → ECR push

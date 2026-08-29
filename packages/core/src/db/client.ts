@@ -9,13 +9,13 @@ export interface Db {
 
 /**
  * 接続文字列から Drizzle クライアントを作る。
- * rds.force_ssl = 1 なので TLS は必須。RDS の CA バンドルは取得しない方針のため
- * rejectUnauthorized: false（経路暗号化のみ担保する = sslmode=require 相当）。
+ * TLS モードは pool オプションではなく接続文字列の sslmode で決まる
+ * （pg は connectionString の値で明示的な ssl オプションを上書きするため、
+ * ここに ssl を渡しても無視される）。詳細は buildConnectionString のコメントを参照。
  */
 export function createDb(connectionString: string): Db {
   const pool = new pg.Pool({
     connectionString,
-    ssl: { rejectUnauthorized: false },
   });
 
   return {

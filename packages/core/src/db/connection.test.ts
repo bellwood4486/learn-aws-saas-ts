@@ -36,7 +36,7 @@ describe('buildConnectionString', () => {
     const url = buildConnectionString(parseDbSecret(secretJson));
 
     expect(url).toBe(
-      'postgres://app:p%40ss%20word%2Fwith%3Asymbols@learn-aws-saas-ts-app.abc123.ap-northeast-1.rds.amazonaws.com:5432/app?sslmode=require',
+      'postgres://app:p%40ss%20word%2Fwith%3Asymbols@learn-aws-saas-ts-app.abc123.ap-northeast-1.rds.amazonaws.com:5432/app?sslmode=no-verify',
     );
   });
 
@@ -47,7 +47,13 @@ describe('buildConnectionString', () => {
     });
 
     expect(url).toBe(
-      'postgres://app:p%40ss%20word%2Fwith%3Asymbols@localhost:5432/app?sslmode=require',
+      'postgres://app:p%40ss%20word%2Fwith%3Asymbols@localhost:5432/app?sslmode=no-verify',
     );
+  });
+
+  it('sslmode=require ではなく no-verify を使う（pg は接続文字列の sslmode で明示的な ssl オプションを上書きするため、require だと SSM トンネル越しの localhost 接続で証明書検証に失敗する）', () => {
+    const url = buildConnectionString(parseDbSecret(secretJson));
+
+    expect(url.endsWith('sslmode=no-verify')).toBe(true);
   });
 });

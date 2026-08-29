@@ -27,6 +27,8 @@
 
 RDS は private subnet にあり、パブリックアクセスも無効なので、ローカルからは直接繋がらない。`AWS-StartPortForwardingSessionToRemoteHost` は **SSM 管理下のインスタンスを起点に** 任意の `host:port` へフォワードする仕組みで、RDS 自体は SSM 管理ノードになれない。そのため踏み台 EC2 が要る（ECS Exec は interactive command のみでポートフォワードに非対応なので、M4 を待っても解決しない）。
 
+**事前準備: `session-manager-plugin`。** `aws ssm start-session`（`just db-tunnel`）は AWS CLI 本体とは別のプラグインバイナリを必要とする。mise の `awscli` パッケージはこれを含まないため、`mise install` だけでは足りない。`brew install --cask session-manager-plugin` で別途インストールすること（未インストールだと `SessionManagerPlugin is not found` で失敗する）。
+
 ターミナル1（トンネルを張る。開いたままにする）:
 
 ```console
@@ -47,6 +49,8 @@ $ just db-check
 $ just db-psql
 ```
 
+**`just db-url` が返す接続文字列は `sslmode=require` ではなく `sslmode=no-verify` を使う。** pg（node-postgres）は接続文字列に書かれた `sslmode` の値で明示的な ssl オプションを上書きしてしまう実装になっており、`require` だと「証明書検証あり」に解決される。RDS の CA バンドルを取得しない方針の下でこれをやると、SSM トンネル越しに host が `localhost` になった瞬間に証明書・ホスト名検証で必ず失敗する。`no-verify` は pg-connection-string の拡張で `rejectUnauthorized: false` 相当になり、TLS は必須のまま証明書検証だけ諦める。psql（libpq）は `no-verify` を解さないので、`db-psql` だけは別途 `PGSSLMODE=require` で接続する（psql 版の同じトレードオフは下の「注意」に既出）。
+
 ## 注意
 
 - **セッション毎レイヤー。** 使い終わったら `just tf-destroy data` で必ず壊す（`just down` は app → data → network の順に destroy する）。RDS `db.t4g.micro` は ~$0.02/h、踏み台 t4g.nano は僅少だが、消し忘れると踏み台だけで ~$3/月
@@ -54,6 +58,6 @@ $ just db-psql
 - **RDS のデータは destroy で消える。** スキーマは Drizzle の migration（`just db-migrate`）、初期データは `just db-seed` で毎回流し直す
 - **`manage_master_user_password` を使わない理由。** RDS が所有するシークレットは Terraform のリソースとして持てず recovery window を制御できないため、destroy のたびに削除待ちのシークレットが $0.40/月 ずつ残る恐れがある。`random_password` + 自前の `aws_secretsmanager_secret`（`recovery_window_in_days = 0`）なら destroy で確実に消え、状態が決定的になる。代償は「パスワードが tfstate に平文で載る」こと（tfstate バケットは SSE-S3 + public access block 済み）
 - **`random_password` の記号制約。** RDS のマスターパスワードは `/` `@` `"` スペースを禁止する。`override_special` で明示的に除外している。`terraform validate` は通り `apply` で落ちるので気づきにくい
-- **`rds.force_ssl = 1`。** クライアントは TLS 必須。接続文字列に `sslmode=require` を付ける（`verify-full` は RDS の CA 証明書バンドル取得が要るので採らない。経路暗号化のみ担保する落とし所）
+- **`rds.force_ssl = 1`。** クライアントは TLS 必須。Node（`just db-url` が組み立てる接続文字列）は `sslmode=no-verify`、psql（`just db-psql`）は `PGSSLMODE=require` を使う（理由は上の「接続手順」参照。`verify-full` は RDS の CA 証明書バンドル取得が要るので採らない。どちらも経路暗号化のみ担保する落とし所）
 - **踏み台の SG は `infra/network/` にある。** M2 の慣習どおり SG という「箱」は network 層。ingress は持たず、egress は 443（SSM エンドポイント）と RDS SG 宛て 5432（ポートフォワードの実体）の2本。設計ドキュメントは「egress は 443 のみ」と書いているが、Terraform が既定の全許可 egress を削除するため、5432 が無いとポートフォワードがタイムアウトする
 - **AMI は SSM Parameter Store 参照。** `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64` を読むので常に最新の Amazon Linux 2023 arm64 になる。踏み台は使い捨てなので AMI が変わっても困らない
