@@ -133,25 +133,46 @@ test-watch:
 # db — Drizzle と DB 接続
 # ------------------------------------------------------------------
 
-# Drizzle スキーマから migration SQL を生成する（infra/data/ が M3 で追加後に使う）
+# Drizzle スキーマから migration SQL を生成する（AWS には繋がない）
 [group('db')]
 db-generate:
     pnpm --filter @repo/core exec drizzle-kit generate
 
-# 生成済みの migration を RDS に適用する
+# SSM ポートフォワードで RDS への localhost:5432 トンネルを張る（開いたままにする）
+[group('db')]
+db-tunnel:
+    aws ssm start-session \
+        --target "$(cd infra/data && terraform output -raw bastion_instance_id)" \
+        --document-name AWS-StartPortForwardingSessionToRemoteHost \
+        --parameters host="$(cd infra/data && terraform output -raw db_address)",portNumber="5432",localPortNumber="5432"
+
+# Secrets Manager の DB 認証情報から localhost トンネル用の接続文字列を組み立てて表示する
+[group('db')]
+db-url:
+    @aws secretsmanager get-secret-value \
+        --secret-id "$(cd infra/data && terraform output -raw db_secret_name)" \
+        --query SecretString --output text \
+    | node -e 'let s="";process.stdin.on("data",d=>{s+=d}).on("end",()=>{const v=JSON.parse(s);process.stdout.write("postgres://"+v.username+":"+encodeURIComponent(v.password)+"@localhost:5432/"+v.dbname+"?sslmode=require\n")})'
+
+# 生成済みの migration を RDS に適用する（db-tunnel を別ターミナルで開いておくこと）
 [group('db')]
 db-migrate:
-    pnpm --filter @repo/core exec drizzle-kit migrate
+    DATABASE_URL="$(just db-url)" pnpm --filter @repo/core exec drizzle-kit migrate
 
 # 初期データを投入する（destroy → apply の後、毎回流し直す前提）
 [group('db')]
 db-seed:
-    pnpm --filter @repo/core exec node scripts/seed.ts
+    DATABASE_URL="$(just db-url)" pnpm --filter @repo/core exec node src/db/seed.ts
 
-# SSM ポートフォワード経由で RDS に psql 接続する手順を表示する
+# トンネル越しに接続してテーブル一覧と items の件数を表示する（psql 不要）
+[group('db')]
+db-check:
+    DATABASE_URL="$(just db-url)" pnpm --filter @repo/core exec node src/db/check.ts
+
+# psql で接続する（別ターミナルで just db-tunnel を開いておくこと。psql は mise 管理外）
 [group('db')]
 db-psql:
-    @echo "SSM ポートフォワード経由で接続する。infra/data/README.md を参照"
+    psql "$(just db-url)"
 
 # ------------------------------------------------------------------
 # docker — turbo prune → build → ECR push
@@ -184,6 +205,7 @@ cost-report:
 [group('cost')]
 leaks:
     aws ec2 describe-nat-gateways --filter Name=state,Values=available
+    aws ec2 describe-instances --filters Name=instance-state-name,Values=running,pending,stopping,stopped
     aws ec2 describe-addresses
     aws elbv2 describe-load-balancers
     aws rds describe-db-instances
