@@ -28,6 +28,11 @@ output "rds_security_group_id" {
   value       = aws_security_group.rds.id
 }
 
+output "bastion_security_group_id" {
+  description = "SSM 踏み台 EC2 に付与する SG の ID。"
+  value       = aws_security_group.bastion.id
+}
+
 output "nat_gateway_id" {
   description = "NAT Gateway の ID（参考情報）。"
   value       = aws_nat_gateway.app.id
