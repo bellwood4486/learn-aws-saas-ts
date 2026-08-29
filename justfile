@@ -159,12 +159,12 @@ db-url:
 db-migrate:
     DATABASE_URL="$(just db-url)" pnpm --filter @repo/core exec drizzle-kit migrate
 
-# 初期データを投入する（destroy → apply の後、毎回流し直す前提）
+# 初期データを投入する（destroy → apply の後、毎回流し直す前提。db-tunnel を別ターミナルで開いておくこと）
 [group('db')]
 db-seed:
     DATABASE_URL="$(just db-url)" pnpm --filter @repo/core exec node src/db/seed.ts
 
-# トンネル越しに接続してテーブル一覧と items の件数を表示する（psql 不要）
+# トンネル越しに接続してテーブル一覧と items の件数を表示する（psql 不要。db-tunnel を別ターミナルで開いておくこと）
 [group('db')]
 db-check:
     DATABASE_URL="$(just db-url)" pnpm --filter @repo/core exec node src/db/check.ts
