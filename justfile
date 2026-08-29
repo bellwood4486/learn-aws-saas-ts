@@ -170,9 +170,9 @@ db-check:
     DATABASE_URL="$(just db-url)" pnpm --filter @repo/core exec node src/db/check.ts
 
 # psql で接続する（別ターミナルで just db-tunnel を開いておくこと。psql は mise 管理外）
-# db-url が返す sslmode=no-verify は libpq（psql）にとって未知の値でエラーになるため使えない。
-# 代わりに PGSSLMODE=require で接続する（別ターミナルで just db-tunnel を開いておくこと。psql は mise 管理外）。
-# psql はパスワード入力を対話プロンプトで求めてくる。パスワードは Secrets Manager にあり、`just db-url` が出す URL にも含まれている
+# db-url が返す sslmode=no-verify は libpq（psql）にとって未知の値でエラーになるため使えない。代わりに PGSSLMODE=require で接続する。
+# パスワードは Secrets Manager にあり、`just db-url` が出す URL にも含まれているので、psql の対話プロンプトにはそこから拾って入力する
+# psql で接続する（別ターミナルで just db-tunnel を開いておくこと。psql は mise 管理外）
 [group('db')]
 db-psql:
     PGSSLMODE=require psql -h localhost -p 5432 -U app -d app
