@@ -6,6 +6,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# turbo prune --docker の出力（just image-build が毎回生成する）
+/out/
+
 # terraform
 # .terraform.lock.hcl はプロバイダバージョン固定のためコミットする（除外しない）
 .terraform/
