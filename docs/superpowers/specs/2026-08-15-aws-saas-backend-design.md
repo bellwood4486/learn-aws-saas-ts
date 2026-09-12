@@ -485,7 +485,7 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 - ✅ **`just leaks` に `aws ec2 describe-instances` を追加**（消し忘れた bastion の t4g.nano を検知対象にする。忘れると ~$3/月）。実機検証の destroy 後は NatGateways/Reservations/Addresses/LoadBalancers/DBInstances がすべて空で、残っていたのは platform 層の常設シークレットのみだった
 - ✅ 実機検証: `just tf-apply network` が30リソース、`just tf-apply data` が10リソースを作成（RDS 作成が ~7分で支配的）。`just db-migrate` → `just db-seed`（`seeded 2 items`）→ `just db-check`（`items rows: 2`）が成功し、`db-seed` の再実行でも件数は増えない idempotent な挙動を確認。`just --yes tf-destroy data` で10リソース、`just --yes tf-destroy network` で30リソースを破棄
 
-**M4: app 層 — バックエンドが全部繋がる**
+**M4: app 層 — バックエンドが全部繋がる — 完了**
 - `turbo prune` → Docker ビルド → ECR push → ECS Fargate で api / worker 起動 → ALB 経由でアクセス
 - **task role と task execution role の使い分け**をここで明示的に扱う（Fargate の定番のつまずきポイント）
 - CloudWatch Logs でログを追う
