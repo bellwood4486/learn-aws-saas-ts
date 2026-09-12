@@ -20,6 +20,8 @@ const row: ItemRow = {
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
 };
 
+const authHeader = { authorization: 'Bearer valid-token' };
+
 function fakeDb(rows: ItemRow[]): Db['db'] {
   return {
     insert: () => ({
@@ -40,10 +42,23 @@ function buildTestServer(rows: ItemRow[]) {
     db: fakeDb(rows),
     itemsTableName: 'items',
     itemsQueueUrl: 'https://queue.example/items',
+    verifyToken: async () => ({ sub: 'user-1' }),
   });
 }
 
 describe('POST /api/items', () => {
+  it('Authorizationヘッダが無ければ401', async () => {
+    const app = await buildTestServer([row]);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/items',
+      payload: { title: 'hello' },
+    });
+
+    expect(res.statusCode).toBe(401);
+    await app.close();
+  });
+
   it('201でitemを返す', async () => {
     sqsMock.on(SendMessageCommand).resolves({ MessageId: 'msg-1' });
     ddbMock.on(PutCommand).resolves({});
@@ -52,6 +67,7 @@ describe('POST /api/items', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/items',
+      headers: authHeader,
       payload: { title: 'hello', note: 'world' },
     });
 
@@ -62,7 +78,12 @@ describe('POST /api/items', () => {
 
   it('titleが無ければ400', async () => {
     const app = await buildTestServer([row]);
-    const res = await app.inject({ method: 'POST', url: '/api/items', payload: {} });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/items',
+      headers: authHeader,
+      payload: {},
+    });
 
     expect(res.statusCode).toBe(400);
     await app.close();
@@ -70,11 +91,23 @@ describe('POST /api/items', () => {
 });
 
 describe('GET /api/items/:id', () => {
+  it('Authorizationヘッダが無ければ401', async () => {
+    const app = await buildTestServer([row]);
+    const res = await app.inject({ method: 'GET', url: `/api/items/${row.id}` });
+
+    expect(res.statusCode).toBe(401);
+    await app.close();
+  });
+
   it('存在すれば200', async () => {
     ddbMock.on(GetCommand).resolves({ Item: { id: row.id, status: 'processed' } });
 
     const app = await buildTestServer([row]);
-    const res = await app.inject({ method: 'GET', url: `/api/items/${row.id}` });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/items/${row.id}`,
+      headers: authHeader,
+    });
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ id: row.id, status: 'processed' });
@@ -83,7 +116,11 @@ describe('GET /api/items/:id', () => {
 
   it('存在しなければ404', async () => {
     const app = await buildTestServer([]);
-    const res = await app.inject({ method: 'GET', url: `/api/items/${row.id}` });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/items/${row.id}`,
+      headers: authHeader,
+    });
 
     expect(res.statusCode).toBe(404);
     await app.close();
