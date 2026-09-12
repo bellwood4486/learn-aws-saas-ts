@@ -1,5 +1,5 @@
 {
-  "name": "@repo/api",
+  "name": "@repo/worker",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,13 +10,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@repo/contracts": "workspace:*",
-    "@repo/core": "workspace:*",
-    "fastify": "^5.12.0",
-    "@fastify/type-provider-typebox": "^6.1.0"
+    "@repo/core": "workspace:*"
   },
   "devDependencies": {
-    "@aws-sdk/client-dynamodb": "^3.1110.0",
+    "@aws-sdk/client-s3": "^3.1110.0",
     "@aws-sdk/client-sqs": "^3.1110.0",
     "@aws-sdk/lib-dynamodb": "^3.1110.0",
     "@repo/tsconfig": "workspace:*",

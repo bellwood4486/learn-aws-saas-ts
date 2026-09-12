@@ -187,10 +187,12 @@ image-build:
     pnpm exec turbo prune @repo/api @repo/worker --docker
     docker build -t learn-aws-saas-ts:local .
 
-# commit SHA タグで ECR に push する（M4 実装時に追加）
+# commit SHA タグで ECR に push する
 [group('docker')]
 image-push:
-    @echo "ECR ログイン + push は M4 実装時に追加する"
+    aws ecr get-login-password | docker login --username AWS --password-stdin "$(cd infra/platform && terraform output -raw ecr_repository_url | cut -d/ -f1)"
+    docker tag learn-aws-saas-ts:local "$(cd infra/platform && terraform output -raw ecr_repository_url):$(git rev-parse --short HEAD)"
+    docker push "$(cd infra/platform && terraform output -raw ecr_repository_url):$(git rev-parse --short HEAD)"
 
 # ------------------------------------------------------------------
 # cost — コスト実績と消し残しリソースの検出

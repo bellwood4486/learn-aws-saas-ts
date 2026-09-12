@@ -1,5 +1,5 @@
 import { buildConnectionString, createDb, getSecretValue, parseDbSecret } from '@repo/core';
-import { buildServer } from './server.ts';
+import { pollOnce } from './poll.ts';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -12,11 +12,14 @@ function requireEnv(name: string): string {
 const dbSecretArn = requireEnv('DB_SECRET_ARN');
 const itemsTableName = requireEnv('ITEMS_TABLE_NAME');
 const itemsQueueUrl = requireEnv('ITEMS_QUEUE_URL');
+const appBucketName = requireEnv('APP_BUCKET_NAME');
 
 const dbSecret = parseDbSecret(await getSecretValue(dbSecretArn));
 const { db } = createDb(buildConnectionString(dbSecret));
 
-const app = await buildServer({ db, itemsTableName, itemsQueueUrl });
+const deps = { db, itemsTableName, itemsQueueUrl, appBucketName };
 
-// localhost 固定だと ALB のヘルスチェックが通らないので 0.0.0.0 で listen する
-await app.listen({ host: '0.0.0.0', port: Number(process.env.PORT ?? 3000) });
+// receiveMessages は WaitTimeSeconds=5 のロングポーリングなので、無限ループでもAPI呼び出し過多にならない。
+for (;;) {
+  await pollOnce(deps);
+}
