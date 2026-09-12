@@ -47,3 +47,13 @@ output "aws_region" {
   description = "全層で共通のリージョン。"
   value       = var.aws_region
 }
+
+output "cognito_user_pool_id" {
+  description = "Cognito User Pool の ID。api の JWT 検証（issuer）、動作確認用ユーザー作成で使う。"
+  value       = aws_cognito_user_pool.app.id
+}
+
+output "cognito_user_pool_client_id" {
+  description = "Cognito App Client の ID。api の JWT 検証（aud）、動作確認用トークン取得で使う。"
+  value       = aws_cognito_user_pool_client.web.id
+}
