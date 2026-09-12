@@ -1,0 +1,25 @@
+{
+  "name": "@repo/worker",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/main.ts",
+    "start": "node src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@repo/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1110.0",
+    "@aws-sdk/client-sqs": "^3.1110.0",
+    "@aws-sdk/lib-dynamodb": "^3.1110.0",
+    "@repo/tsconfig": "workspace:*",
+    "@types/node": "^24.13.3",
+    "aws-sdk-client-mock": "^4.1.0",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -64,6 +64,37 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.12))
 
+  apps/worker:
+    dependencies:
+      '@repo/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+    devDependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.1110.0
+        version: 3.1110.0
+      '@aws-sdk/client-sqs':
+        specifier: ^3.1110.0
+        version: 3.1110.0
+      '@aws-sdk/lib-dynamodb':
+        specifier: ^3.1110.0
+        version: 3.1110.0(@aws-sdk/client-dynamodb@3.1110.0)
+      '@repo/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/tsconfig
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      aws-sdk-client-mock:
+        specifier: ^4.1.0
+        version: 4.1.0
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.12))
+
   packages/contracts:
     dependencies:
       '@sinclair/typebox':
