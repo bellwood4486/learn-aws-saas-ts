@@ -490,6 +490,22 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 - **task role と task execution role の使い分け**をここで明示的に扱う（Fargate の定番のつまずきポイント）
 - CloudWatch Logs でログを追う
 
+**items ドメインロジック（`@repo/core` に追加）**: `@repo/contracts` の `Item`（RDS行 + DynamoDB status の合成）と `packages/core/src/db/schema.ts` の `items` テーブルはすでに存在する。`@repo/core` に `items.ts` を新設し、api/worker 双方から呼ぶ:
+- `createItem(input)` — RDS に insert → DynamoDB に `{id, status: 'pending'}` を put → SQS に `{id}` を send
+- `getItem(id)` — RDS の行 + DynamoDB の status を合成して `Item` を返す（RDS 行が無ければ `undefined`）
+- `processItem(id)` — worker 用。RDS から読み直し、S3 に `items/<id>.json`（title/note/processedAt のダミースナップショット）を保存 → DynamoDB の status を `'processed'` に更新
+- **`'failed'` ステータスは型だけ用意し、M4 では作らない**（happy path のみ実装。SQS の redrive policy は M1 で設定済みなので DLQ 自体は機能する）
+- worker は `receiveMessages` → 各メッセージで `processItem` → 成功したら `deleteMessage` → ログ出力、のループ。例外はログを出すだけでメッセージを消さない（再配送に任せる。DLQ 以降のハンドリングは対象外）
+
+**Docker（`turbo prune` 必須。api/worker 共用イメージの決定は変更なし）**: リポジトリ直下に1つの `Dockerfile`。`turbo prune --scope=@repo/api --scope=@repo/worker --docker` で剪定 → `pnpm install --frozen-lockfile` → `turbo run build`（`packages/*` のみビルドされる。apps は build タスクを持たないため対象外）→ ランタイムイメージ。デフォルト `CMD` は api 向け、ECS の worker タスク定義側で `command` を worker 向けに上書きする
+
+**`infra/app/`**:
+- ECS クラスタ、CloudWatch Logs ロググループ ×2（`/ecs/<project>-api` / `/ecs/<project>-worker`）
+- IAM: task execution role は api/worker で共用（ECR pull・Logs書き込みのみ、ビジネス権限を含まないため）。**task role は api/worker で分離**（api: DynamoDB put/get・SQS send・Secrets Manager(db secret) get / worker: DynamoDB put・S3 put・SQS receive/delete・Secrets Manager(db secret) get）— api は S3 を一切触らないため権限を持たせない。IAM の最小権限原則を学習する狙い
+- ALB（public subnet）+ target group（`target_type = "ip"`、`/healthz` ヘルスチェック）+ HTTP(80) リスナーのみ（HTTPS/ACM は M7 で CloudFront 側に任せる）。**api サービスのみ** ALB に紐付ける。worker は SQS をポーリングするだけなので ALB 不要
+- ECS サービス ×2（api: ALB 配下・private subnet・`ecs` SG / worker: ALB なし・private subnet・`ecs` SG）。SG は M2 で作成済みの `ecs` SG（ALB からの app_port ingress + RDS/HTTPS egress）がそのまま両サービスの要件を満たすため変更不要
+- タスク定義の環境変数でリソース識別子（S3バケット名・DynamoDBテーブル名・SQSキューURL・DB secret ARN 等）を platform 層・data 層の `terraform_remote_state` から注入する
+
 **M5: Cognito**
 - User Pool / App Client、api に JWT 検証プラグイン
 - ALB の `authenticate-cognito` リスナーアクションは **HTTPS リスナー必須**のため使えない。アプリ層での JWT 検証が唯一の選択肢
