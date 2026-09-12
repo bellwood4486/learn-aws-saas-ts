@@ -30,6 +30,8 @@ resource "aws_ecs_task_definition" "api" {
         { name = "DB_SECRET_ARN", value = data.terraform_remote_state.data_layer.outputs.db_secret_arn },
         { name = "ITEMS_TABLE_NAME", value = data.terraform_remote_state.platform.outputs.items_table_name },
         { name = "ITEMS_QUEUE_URL", value = data.terraform_remote_state.platform.outputs.items_queue_url },
+        { name = "COGNITO_USER_POOL_ID", value = data.terraform_remote_state.platform.outputs.cognito_user_pool_id },
+        { name = "COGNITO_CLIENT_ID", value = data.terraform_remote_state.platform.outputs.cognito_user_pool_client_id },
       ]
       logConfiguration = {
         logDriver = "awslogs"

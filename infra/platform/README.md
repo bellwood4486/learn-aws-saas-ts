@@ -1,6 +1,6 @@
 # platform
 
-常時起動する土台リソースを作る層。S3（アプリ用オブジェクト）、DynamoDB（`items` テーブル）、SQS+DLQ、ECR（api/worker 共用）、アプリ用シークレットを持つ。
+常時起動する土台リソースを作る層。S3（アプリ用オブジェクト）、DynamoDB（`items` テーブル）、SQS+DLQ、ECR（api/worker 共用）、アプリ用シークレット、Cognito User Pool/App Clientを持つ。
 
 ## 依存
 
@@ -18,6 +18,8 @@
 | `ecr_repository_url` | api/worker 共用 ECR リポジトリの URL |
 | `app_secret_arn` | アプリ用シークレットの ARN（値は含まない） |
 | `aws_region` | 全層で共通のリージョン |
+| `cognito_user_pool_id` | Cognito User Pool の ID |
+| `cognito_user_pool_client_id` | Cognito App Client の ID |
 
 ## 注意
 

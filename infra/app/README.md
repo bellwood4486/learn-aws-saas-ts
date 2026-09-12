@@ -6,7 +6,7 @@
 
 - `infra/bootstrap/`（tfstateバケット）
 - `infra/network/`（VPC・subnet・SG。`ecs`SGはM2で作成済みでALBからのapp_port ingress・RDS/HTTPS egressを既に満たすため変更不要）
-- `infra/platform/`（ECRリポジトリ・DynamoDBテーブル・SQSキュー・S3バケット。M4でARN出力を2つ追加した）
+- `infra/platform/`（ECRリポジトリ・DynamoDBテーブル・SQSキュー・S3バケット・Cognito User Pool/App Client。M4でARN出力を2つ、M5でCognito出力を2つ追加した）
 - `infra/data/`（RDSのDB認証情報シークレット）
 
 ## image_tag について

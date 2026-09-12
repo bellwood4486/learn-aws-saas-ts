@@ -506,9 +506,12 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 - ECS サービス ×2（api: ALB 配下・private subnet・`ecs` SG / worker: ALB なし・private subnet・`ecs` SG）。SG は M2 で作成済みの `ecs` SG（ALB からの app_port ingress + RDS/HTTPS egress）がそのまま両サービスの要件を満たすため変更不要
 - タスク定義の環境変数でリソース識別子（S3バケット名・DynamoDBテーブル名・SQSキューURL・DB secret ARN 等）を platform 層・data 層の `terraform_remote_state` から注入する
 
-**M5: Cognito**
-- User Pool / App Client、api に JWT 検証プラグイン
+**M5: Cognito — 完了**
+- ✅ User Pool / App Client、api に JWT 検証プラグイン
 - ALB の `authenticate-cognito` リスナーアクションは **HTTPS リスナー必須**のため使えない。アプリ層での JWT 検証が唯一の選択肢
+- ✅ JWT検証は `aws-jwt-verify` の `CognitoJwtVerifier`（tokenUse: access）を使用。`apps/api/src/plugins/auth.ts` が `verifyToken` を依存として注入する設計にし、ユニットテストは実Cognitoに繋がずフェイク関数で検証した
+- ✅ Cognito App Client は自己サインアップ無効（`admin_create_user_config.allow_admin_create_user_only = true`）。Hosted UI / OAuth コールバックURLはM6でフロントのログイン方式が決まってから追加する
+- ✅ 実機検証: ALBのDNS名への `curl -X POST /api/items` がJWTなしで401、`aws cognito-idp admin-initiate-auth`（`ADMIN_USER_PASSWORD_AUTH`）で取得したJWTありで201を返すことを確認した。`GET /api/items/:id` も同様にJWTなしで401・ありで200
 
 **M6: フロントエンド（ローカルのみ）**
 - `apps/web` を Vite + React で実装、`@repo/contracts` 経由で API を呼ぶ
