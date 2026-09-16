@@ -1,5 +1,5 @@
 import type { CreateItemBody, Item } from '@repo/contracts';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type { Db } from './db/client.ts';
 import type { ItemRow } from './db/schema.ts';
 import { items } from './db/schema.ts';
@@ -73,6 +73,30 @@ export async function getItem(deps: GetItemDeps, id: string): Promise<Item | und
   }
 
   return composeItem(row, parseItemStatus(record.status));
+}
+
+export interface ListItemsDeps {
+  db: Database;
+  itemsTableName: string;
+}
+
+/**
+ * RDSの全行（作成日時の降順）にDynamoDBのstatusを合成して返す。
+ * 行ごとにDynamoDBへ1回getする（N+1）が、学習用途でデータ量が少ないため許容し、
+ * getItemとの実装の一貫性を優先する。
+ */
+export async function listItems(deps: ListItemsDeps): Promise<Item[]> {
+  const rows = await deps.db.select().from(items).orderBy(desc(items.createdAt));
+
+  const result: Item[] = [];
+  for (const row of rows) {
+    const record = await getStatusRecord(deps.itemsTableName, { id: row.id });
+    if (record === undefined) {
+      throw new Error(`item status record not found in DynamoDB for id: ${row.id}`);
+    }
+    result.push(composeItem(row, parseItemStatus(record.status)));
+  }
+  return result;
 }
 
 export interface ProcessItemDeps {
