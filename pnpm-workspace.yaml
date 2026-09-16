@@ -1,6 +1,9 @@
 packages:
   - "apps/*"
   - "packages/*"
+# apps/web の @aws-sdk/client-cognito-identity-provider が apps/api の
+# 古い @aws-sdk/*（^3.1110.0 系）と異なる @smithy/types を要求し重複していたため一本化する。
+# apps/api の AWS SDK 依存を上げて自然に重複が解消されたら削除してよい。
 overrides:
   '@smithy/types': '4.18.0'
 allowBuilds:
