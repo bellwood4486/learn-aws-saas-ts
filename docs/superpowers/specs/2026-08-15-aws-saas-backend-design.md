@@ -532,7 +532,7 @@ apps/web/
 ├── vite.config.ts        # dev server proxy: /api → http://localhost:3000
 ├── tsconfig.json         # @repo/tsconfig/app.json を extends + lib dom / jsx 追加
 ├── index.html
-├── .env.local            # 未commit。VITE_COGNITO_USER_POOL_ID / VITE_COGNITO_CLIENT_ID
+├── .env.local            # 未commit。VITE_COGNITO_CLIENT_ID / VITE_AWS_REGION
 ├── .env.template         # commit対象。キーのみ
 └── src/
     ├── main.tsx           # ReactDOM.createRoot + QueryClientProvider
@@ -551,7 +551,7 @@ apps/web/
 **設計判断**:
 - **認証方式は直接ログイン（USER_PASSWORD_AUTH）**。Hosted UI / OAuth は使わない。`infra/platform/cognito.tf` の Cognito App Client には既に `ALLOW_USER_PASSWORD_AUTH` が設定済み（M5で先行して用意されている）
 - **Cognitoクライアントは `@aws-sdk/client-cognito-identity-provider` の `InitiateAuthCommand` を直接呼ぶ薄い実装**を採用（aws-amplify/auth は不採用。Hosted UI/OAuthを使わないためAmplifyのセッション管理機能が過剰で、`@repo/core` のAWS SDK v3利用パターンとも一貫する）
-- **User Pool ID / App Client ID は `apps/web/.env.local`（未commit）に Vite 環境変数として手動設定**する。値は `infra/platform` の `terraform output` から取得する。`.env.template` をcommitしてキーのみ残す。M8（CI/CD）で自動デプロイに載せる際は配線方法を見直す
+- **App Client ID / AWS リージョンは `apps/web/.env.local`（未commit）に Vite 環境変数として手動設定**する（`InitiateAuthCommand` は `ClientId` のみを要求し `UserPoolId` は不要なため、渡すのは Client ID のみでよい）。値は `infra/platform` の `terraform output` から取得する。`.env.template` をcommitしてキーのみ残す。M8（CI/CD）で自動デプロイに載せる際は配線方法を見直す
 - **access tokenはReact stateのみで保持**（sessionStorage/localStorageは使わない）。リロードでログイン状態は失われる。refresh tokenの扱いはM6のスコープ外（App Clientでは`ALLOW_REFRESH_TOKEN_AUTH`を有効化済みだが未使用）。access tokenが失効しAPIが401を返したら、ログイン画面に戻すだけのシンプルな挙動にする
 - **画面はルーティングライブラリなしの単一ページ**。認証状態（`useAuth`のaccessTokenがnullか否か）で `LoginForm` と 一覧＋作成フォーム を出し分ける。React Routerは導入しない
 - **CORSは不要**。Vite dev serverのproxyでローカルの `apps/api`（`http://localhost:3000`）に転送し同一オリジンに見せるため、`apps/api` 側にCORS設定を追加しない
