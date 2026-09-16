@@ -1,6 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
+overrides:
+  '@smithy/types': '4.18.0'
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
