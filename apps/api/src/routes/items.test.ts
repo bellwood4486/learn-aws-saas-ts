@@ -32,6 +32,7 @@ function fakeDb(rows: ItemRow[]): Db['db'] {
     select: () => ({
       from: () => ({
         where: async () => rows,
+        orderBy: async () => rows,
       }),
     }),
   } as unknown as Db['db'];
@@ -123,6 +124,36 @@ describe('GET /api/items/:id', () => {
     });
 
     expect(res.statusCode).toBe(404);
+    await app.close();
+  });
+});
+
+describe('GET /api/items', () => {
+  it('Authorizationヘッダが無ければ401', async () => {
+    const app = await buildTestServer([row]);
+    const res = await app.inject({ method: 'GET', url: '/api/items' });
+
+    expect(res.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it('200で一覧を返す', async () => {
+    ddbMock.on(GetCommand).resolves({ Item: { id: row.id, status: 'pending' } });
+
+    const app = await buildTestServer([row]);
+    const res = await app.inject({ method: 'GET', url: '/api/items', headers: authHeader });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject([{ id: row.id, title: 'hello', status: 'pending' }]);
+    await app.close();
+  });
+
+  it('1件も無ければ空配列を返す', async () => {
+    const app = await buildTestServer([]);
+    const res = await app.inject({ method: 'GET', url: '/api/items', headers: authHeader });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([]);
     await app.close();
   });
 });

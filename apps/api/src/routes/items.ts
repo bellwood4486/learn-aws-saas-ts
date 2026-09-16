@@ -1,7 +1,7 @@
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
-import { CreateItemBody, Item, ItemParams } from '@repo/contracts';
+import { CreateItemBody, Item, ItemList, ItemParams } from '@repo/contracts';
 import type { Db } from '@repo/core';
-import { createItem, getItem } from '@repo/core';
+import { createItem, getItem, listItems } from '@repo/core';
 import type { FastifyInstance } from 'fastify';
 
 export interface ItemRoutesOptions {
@@ -16,6 +16,14 @@ export interface ItemRoutesOptions {
  */
 export async function itemRoutes(app: FastifyInstance, opts: ItemRoutesOptions): Promise<void> {
   const server = app.withTypeProvider<TypeBoxTypeProvider>();
+
+  server.get(
+    '/api/items',
+    { preHandler: app.authenticate, schema: { response: { 200: ItemList } } },
+    async () => {
+      return listItems({ db: opts.db, itemsTableName: opts.itemsTableName });
+    },
+  );
 
   server.post(
     '/api/items',
