@@ -517,7 +517,7 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 - `apps/web` を Vite + React で実装、`@repo/contracts` 経由で API を呼ぶ
 - Vite dev server の proxy で `/api` を **ローカル起動の `apps/api`** に転送してフルスタックで動作確認
 - Cognito ログインを組み込む（localhost は HTTPS 不要）
-- **この段階では CloudFront も ALB も要らない。** ローカルの api に繋ぐので、課金セッションを開かずに進められる（M2〜M4 と並行してよい）
+- **この段階では CloudFront・ALB・app 層（ECS）は要らない。** ただし `apps/api` をローカル起動してフロントと実際に繋ぐには、`network`/`data` 層（実 RDS。`DB_SECRET_ARN` はこの層由来）は apply 済みで課金が発生している必要がある。ローカルの `apps/api` から RDS へは SSM トンネル経由で到達する（具体的な手順は README の「ローカルでのフロントエンド確認」〔M6で追加〕を参照）。それでも M2〜M4 と並行して着手してよい
 
 **バックエンド追加スコープ（M6着手時に判明。一覧APIが存在しなかった）**:
 - `GET /api/items` を新設する。`@repo/contracts` に `ItemList = Type.Array(Item)` を追加し、`packages/core/src/items.ts` に `listItems(deps): Promise<Item[]>` を追加する
