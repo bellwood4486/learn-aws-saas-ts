@@ -5,9 +5,16 @@ import { CreateItemForm } from './components/CreateItemForm.tsx';
 import { ItemList } from './components/ItemList.tsx';
 import { LoginForm } from './components/LoginForm.tsx';
 
+function requireEnvVar(value: string | undefined, name: string): string {
+  if (value === undefined || value === '') {
+    throw new Error(`${name} is not set (.env.local を確認してください)`);
+  }
+  return value;
+}
+
 const authConfig = {
-  region: import.meta.env.VITE_AWS_REGION,
-  clientId: import.meta.env.VITE_COGNITO_CLIENT_ID,
+  region: requireEnvVar(import.meta.env.VITE_AWS_REGION, 'VITE_AWS_REGION'),
+  clientId: requireEnvVar(import.meta.env.VITE_COGNITO_CLIENT_ID, 'VITE_COGNITO_CLIENT_ID'),
 };
 
 export function App() {
