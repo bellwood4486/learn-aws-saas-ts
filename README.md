@@ -38,3 +38,10 @@ just --list
 月 $10 の予算アラートを前提に、常時起動する層（`platform` / `edge`）と、触るときだけ apply する層（`network` / `data` / `app`）を分けている。**セッションの終わりには必ず `just down` → `just leaks` → `just cost-report` を実行し、NAT Gateway / Elastic IP / ALB / RDS / 削除待ちシークレットが残っていないことを確認する。**
 
 詳しい理由は spec ドキュメントの「シークレットと destroy 運用」を参照。
+
+## ローカルでのフロントエンド確認（M6 実機検証で判明した注意点）
+
+`just dev-all` で `apps/web` からログイン・item作成・一覧確認をする場合、`apps/api` を実 AWS（`network`/`data` 層）に繋いで動かす必要がある。その際の注意点:
+
+- **`just db-seed` で投入した初期データは `GET /api/items` で 500 エラーになる。** `db-seed` は RDS にしか行を insert せず、DynamoDB 側の status レコードを作らない。`listItems`（M6 で追加）は RDS の全行について DynamoDB の status を要求するため、`db-seed` 由来の行はここで例外を投げる。ブラウザ確認をする際は `db-seed` を実行しない（または先に `items` テーブルを空にする）か、`apps/web` からの作成（`createItem` 経由。RDS + DynamoDB を両方書く）だけで一覧を確認する。
+- **`apps/api` をローカルの `node --watch src/main.ts` で実 AWS の RDS に繋ぐには `DB_HOST=localhost DB_PORT=5432`（`just db-tunnel` の SSM トンネル経由）を環境変数で渡す。** 未設定なら Secrets Manager の secret に入っている本番相当のホスト名（ECS/Fargate 用）にそのまま繋ぎに行き、ローカルからは到達できない。
