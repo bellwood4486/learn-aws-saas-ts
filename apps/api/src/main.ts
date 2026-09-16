@@ -17,7 +17,14 @@ const cognitoUserPoolId = requireEnv('COGNITO_USER_POOL_ID');
 const cognitoClientId = requireEnv('COGNITO_CLIENT_ID');
 
 const dbSecret = parseDbSecret(await getSecretValue(dbSecretArn));
-const { db } = createDb(buildConnectionString(dbSecret));
+const dbHost = process.env.DB_HOST;
+const dbPort = process.env.DB_PORT;
+const { db } = createDb(
+  buildConnectionString(dbSecret, {
+    host: dbHost,
+    port: dbPort !== undefined ? Number(dbPort) : undefined,
+  }),
+);
 
 const verifier = CognitoJwtVerifier.create({
   userPoolId: cognitoUserPoolId,
