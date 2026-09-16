@@ -9,11 +9,12 @@ vi.mock('./auth/cognito.ts', () => ({ login: vi.fn() }));
 
 function renderApp() {
   const queryClient = new QueryClient();
-  return render(
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <App />
     </QueryClientProvider>,
   );
+  return { ...result, queryClient };
 }
 
 beforeEach(() => {
@@ -41,5 +42,20 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: '新規作成' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'ログアウト' })).toBeInTheDocument();
+  });
+
+  it('ログアウトするとTanStack Queryのキャッシュをクリアする', async () => {
+    vi.mocked(cognito.login).mockResolvedValue({ accessToken: 'token-123' });
+    const user = userEvent.setup();
+    const { queryClient } = renderApp();
+    const clearSpy = vi.spyOn(queryClient, 'clear');
+
+    await user.type(screen.getByLabelText('ユーザー名'), 'user@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'password123');
+    await user.click(screen.getByRole('button', { name: 'ログイン' }));
+
+    await user.click(await screen.findByRole('button', { name: 'ログアウト' }));
+
+    expect(clearSpy).toHaveBeenCalledTimes(1);
   });
 });
