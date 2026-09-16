@@ -31,7 +31,7 @@ just --list
 | `just tf-plan <layer>` | 指定した層で `terraform plan` |
 | `just up` / `just down` | セッション毎に立てる層（network/data/app/edge）をまとめて apply / destroy |
 | `just leaks` | `down` の後に消し残しリソースを確認する（**必ず実行**） |
-| `just dev-all` | ローカルで api + web を同時起動（AWS のセッションを開かずに進められる） |
+| `just dev-all` | ローカルで api + web を同時起動（api を実AWSのnetwork/data層に繋ぐ場合は下記「ローカルでのフロントエンド確認」を参照） |
 
 ## コスト運用
 
