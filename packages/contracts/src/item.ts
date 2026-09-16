@@ -9,13 +9,17 @@ export type CreateItemBody = Static<typeof CreateItemBody>;
 
 /** GET /api/items/:id のレスポンス。RDS の行 + 処理状況（DynamoDB 側の状態）を合成する。 */
 export const Item = Type.Object({
-  id: Type.String({ format: 'uuid' }),
+  id: Type.String(),
   title: Type.String(),
   note: Type.Optional(Type.String()),
   status: Type.Union([Type.Literal('pending'), Type.Literal('processed'), Type.Literal('failed')]),
-  createdAt: Type.String({ format: 'date-time' }),
+  createdAt: Type.String(),
 });
 export type Item = Static<typeof Item>;
+
+/** GET /api/items のレスポンス。 */
+export const ItemList = Type.Array(Item);
+export type ItemList = Static<typeof ItemList>;
 
 /** GET /api/items/:id のパスパラメータ。 */
 export const ItemParams = Type.Object({
