@@ -517,7 +517,46 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 - `apps/web` を Vite + React で実装、`@repo/contracts` 経由で API を呼ぶ
 - Vite dev server の proxy で `/api` を **ローカル起動の `apps/api`** に転送してフルスタックで動作確認
 - Cognito ログインを組み込む（localhost は HTTPS 不要）
-- **この段階では CloudFront も ALB も要らない。** ローカルの api に繋ぐので、課金セッションを開かずに進められる（M2〜M4 と並行してよい）
+- **この段階では CloudFront・ALB・app 層（ECS）は要らない。** ただし `apps/api` をローカル起動してフロントと実際に繋ぐには、`network`/`data` 層（実 RDS。`DB_SECRET_ARN` はこの層由来）は apply 済みで課金が発生している必要がある。ローカルの `apps/api` から RDS へは SSM トンネル経由で到達する（具体的な手順は README の「ローカルでのフロントエンド確認」〔M6で追加〕を参照）。それでも M2〜M4 と並行して着手してよい
+
+**バックエンド追加スコープ（M6着手時に判明。一覧APIが存在しなかった）**:
+- `GET /api/items` を新設する。`@repo/contracts` に `ItemList = Type.Array(Item)` を追加し、`packages/core/src/items.ts` に `listItems(deps): Promise<Item[]>` を追加する
+- 実装は RDS の `items` テーブルを `createdAt desc` で全件 select → 各行について DynamoDB の status を取得し `composeItem`（既存関数）で合成する。N+1 クエリになるが学習用途でデータ量が少ないため許容し、`getItem` との実装の一貫性を優先する
+- ページネーションは実装しない（対象外の明示。件数が増えたら別マイルストーンで検討）
+- `apps/api/src/routes/items.ts` に `GET /api/items` を追加。既存2ルートと同じ `preHandler: app.authenticate` で認証必須にする
+
+**apps/web の構成**:
+```
+apps/web/
+├── package.json
+├── vite.config.ts        # dev server proxy: /api → http://localhost:3000
+├── tsconfig.json         # @repo/tsconfig/app.json を extends + lib dom / jsx 追加
+├── index.html
+├── .env.local            # 未commit。VITE_COGNITO_CLIENT_ID / VITE_AWS_REGION
+├── .env.template         # commit対象。キーのみ
+└── src/
+    ├── main.tsx           # ReactDOM.createRoot + QueryClientProvider
+    ├── App.tsx            # 認証状態で LoginForm / ItemsPage を出し分け（ルーティングなし）
+    ├── auth/
+    │   ├── cognito.ts     # @aws-sdk/client-cognito-identity-provider の InitiateAuthCommand ラッパー
+    │   └── useAuth.ts     # accessToken を React state で保持するフック（ログイン/ログアウト）
+    ├── components/
+    │   ├── LoginForm.tsx
+    │   ├── ItemList.tsx   # TanStack Query の useQuery で GET /api/items
+    │   └── CreateItemForm.tsx  # useMutation で POST /api/items → 成功時に一覧を invalidate
+    └── api/
+        └── client.ts      # fetch ラッパー。Authorization: Bearer <token> を付与、401時にログアウト状態へ
+```
+
+**設計判断**:
+- **認証方式は直接ログイン（USER_PASSWORD_AUTH）**。Hosted UI / OAuth は使わない。`infra/platform/cognito.tf` の Cognito App Client には既に `ALLOW_USER_PASSWORD_AUTH` が設定済み（M5で先行して用意されている）
+- **Cognitoクライアントは `@aws-sdk/client-cognito-identity-provider` の `InitiateAuthCommand` を直接呼ぶ薄い実装**を採用（aws-amplify/auth は不採用。Hosted UI/OAuthを使わないためAmplifyのセッション管理機能が過剰で、`@repo/core` のAWS SDK v3利用パターンとも一貫する）
+- **App Client ID / AWS リージョンは `apps/web/.env.local`（未commit）に Vite 環境変数として手動設定**する（`InitiateAuthCommand` は `ClientId` のみを要求し `UserPoolId` は不要なため、渡すのは Client ID のみでよい）。値は `infra/platform` の `terraform output` から取得する。`.env.template` をcommitしてキーのみ残す。M8（CI/CD）で自動デプロイに載せる際は配線方法を見直す
+- **access tokenはReact stateのみで保持**（sessionStorage/localStorageは使わない）。リロードでログイン状態は失われる。refresh tokenの扱いはM6のスコープ外（App Clientでは`ALLOW_REFRESH_TOKEN_AUTH`を有効化済みだが未使用）。access tokenが失効しAPIが401を返したら、ログイン画面に戻すだけのシンプルな挙動にする
+- **画面はルーティングライブラリなしの単一ページ**。認証状態（`useAuth`のaccessTokenがnullか否か）で `LoginForm` と 一覧＋作成フォーム を出し分ける。React Routerは導入しない
+- **CORSは不要**。Vite dev serverのproxyでローカルの `apps/api`（`http://localhost:3000`）に転送し同一オリジンに見せるため、`apps/api` 側にCORS設定を追加しない
+- **テストはVitest + Testing Library（jsdom）**。`LoginForm` / `ItemList` / `CreateItemForm` を最低限カバーする。Cognito呼び出しとfetchはモックし、ユニットテストは実AWS・実Cognitoに一切繋がない（プロジェクト方針を踏襲）
+- **エラーハンドリング**: ログインエラー（`NotAuthorizedException`等）はフォーム内にメッセージ表示。API側の401はログアウト、それ以外のエラーは一覧/フォームにエラーメッセージを表示するのみで、リトライ機構は作り込まない
 
 **M7: edge 層 — S3 + CloudFront で本番配信**
 - フロント用 S3（非公開）+ CloudFront + OAC

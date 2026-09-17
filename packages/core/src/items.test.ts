@@ -5,7 +5,14 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from './db/client.ts';
 import type { ItemRow } from './db/schema.ts';
-import { composeItem, createItem, getItem, parseItemStatus, processItem } from './items.ts';
+import {
+  composeItem,
+  createItem,
+  getItem,
+  listItems,
+  parseItemStatus,
+  processItem,
+} from './items.ts';
 
 const ddbMock = mockClient(DynamoDBDocumentClient);
 const s3Mock = mockClient(S3Client);
@@ -173,5 +180,59 @@ describe('processItem', () => {
         'missing',
       ),
     ).rejects.toThrow('item not found in RDS for id: missing');
+  });
+});
+
+function fakeListDb(rows: ItemRow[]): Db['db'] {
+  return {
+    select: () => ({
+      from: () => ({
+        orderBy: async () => rows,
+      }),
+    }),
+  } as unknown as Db['db'];
+}
+
+describe('listItems', () => {
+  it('RDSの全行にDynamoDBのstatusを合成して返す', async () => {
+    const row2: ItemRow = { ...row, id: '22222222-2222-2222-2222-222222222222', title: 'second' };
+    ddbMock.on(GetCommand, { TableName: 'items', Key: { id: row.id } }).resolves({
+      Item: { id: row.id, status: 'processed' },
+    });
+    ddbMock.on(GetCommand, { TableName: 'items', Key: { id: row2.id } }).resolves({
+      Item: { id: row2.id, status: 'pending' },
+    });
+
+    const result = await listItems({ db: fakeListDb([row, row2]), itemsTableName: 'items' });
+
+    expect(result).toEqual([
+      {
+        id: row.id,
+        title: 'hello',
+        note: 'world',
+        status: 'processed',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: row2.id,
+        title: 'second',
+        note: 'world',
+        status: 'pending',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('RDSに行が無ければ空配列を返す', async () => {
+    const result = await listItems({ db: fakeListDb([]), itemsTableName: 'items' });
+    expect(result).toEqual([]);
+  });
+
+  it('DynamoDBにstatusレコードが無ければ例外を投げる', async () => {
+    ddbMock.on(GetCommand).resolves({});
+
+    await expect(listItems({ db: fakeListDb([row]), itemsTableName: 'items' })).rejects.toThrow(
+      'item status record not found in DynamoDB',
+    );
   });
 });

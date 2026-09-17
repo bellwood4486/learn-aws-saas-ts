@@ -1,4 +1,9 @@
-import { type Static, Type } from '@sinclair/typebox';
+import { FormatRegistry, type Static, Type } from '@sinclair/typebox';
+
+FormatRegistry.Set('uuid', (value) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value),
+);
+FormatRegistry.Set('date-time', (value) => !Number.isNaN(Date.parse(value)));
 
 /** POST /api/items のリクエストボディ。 */
 export const CreateItemBody = Type.Object({
@@ -16,6 +21,10 @@ export const Item = Type.Object({
   createdAt: Type.String({ format: 'date-time' }),
 });
 export type Item = Static<typeof Item>;
+
+/** GET /api/items のレスポンス。 */
+export const ItemList = Type.Array(Item);
+export type ItemList = Static<typeof ItemList>;
 
 /** GET /api/items/:id のパスパラメータ。 */
 export const ItemParams = Type.Object({

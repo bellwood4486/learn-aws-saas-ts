@@ -31,10 +31,39 @@ just --list
 | `just tf-plan <layer>` | 指定した層で `terraform plan` |
 | `just up` / `just down` | セッション毎に立てる層（network/data/app/edge）をまとめて apply / destroy |
 | `just leaks` | `down` の後に消し残しリソースを確認する（**必ず実行**） |
-| `just dev-all` | ローカルで api + web を同時起動（AWS のセッションを開かずに進められる） |
+| `just dev-all` | ローカルで api + web を同時起動（api を実AWSのnetwork/data層に繋ぐ場合は下記「ローカルでのフロントエンド確認」を参照） |
 
 ## コスト運用
 
 月 $10 の予算アラートを前提に、常時起動する層（`platform` / `edge`）と、触るときだけ apply する層（`network` / `data` / `app`）を分けている。**セッションの終わりには必ず `just down` → `just leaks` → `just cost-report` を実行し、NAT Gateway / Elastic IP / ALB / RDS / 削除待ちシークレットが残っていないことを確認する。**
 
 詳しい理由は spec ドキュメントの「シークレットと destroy 運用」を参照。
+
+## ローカルでのフロントエンド確認（M6 実機検証で判明した注意点）
+
+`just dev-all` で `apps/web` からログイン・item作成・一覧確認をする場合、`apps/api` を実 AWS（`network`/`data` 層）に繋いで動かす必要がある。
+
+セットアップ手順:
+
+1. `network`/`data`/`platform` 層を apply 済みにしておく（`network`/`data` は課金対象。使い終わったら `just down` を忘れずに）
+2. `just db-tunnel` で RDS への SSM トンネルを張る（別ターミナルで張りっぱなしにする）
+3. `cp apps/web/.env.template apps/web/.env.local` を実行し、`infra/platform` で `terraform output -raw cognito_user_pool_client_id` した値を `VITE_COGNITO_CLIENT_ID` に設定する（`VITE_AWS_REGION` はデフォルトのままでよい）
+4. `apps/api` 起動用の環境変数を、`just dev-all` を実行するのと同じシェルで export する:
+   ```sh
+   cd infra/platform
+   export ITEMS_TABLE_NAME="$(terraform output -raw items_table_name)"
+   export ITEMS_QUEUE_URL="$(terraform output -raw items_queue_url)"
+   export COGNITO_USER_POOL_ID="$(terraform output -raw cognito_user_pool_id)"
+   export COGNITO_CLIENT_ID="$(terraform output -raw cognito_user_pool_client_id)"
+   cd ../data
+   export DB_SECRET_ARN="$(terraform output -raw db_secret_arn)"
+   export DB_HOST=localhost
+   export DB_PORT=5432
+   cd ../..
+   ```
+5. 同じシェルで `just dev-all` を実行する
+
+その際の注意点:
+
+- **`just db-seed` で投入した初期データは `GET /api/items` で 500 エラーになる。** `db-seed` は RDS にしか行を insert せず、DynamoDB 側の status レコードを作らない。`listItems`（M6 で追加）は RDS の全行について DynamoDB の status を要求するため、`db-seed` 由来の行はここで例外を投げる。ブラウザ確認をする際は `db-seed` を実行しない（または先に `items` テーブルを空にする）か、`apps/web` からの作成（`createItem` 経由。RDS + DynamoDB を両方書く）だけで一覧を確認する。
+- **`apps/api` をローカルの `node --watch src/main.ts` で実 AWS の RDS に繋ぐには `DB_HOST=localhost DB_PORT=5432`（`just db-tunnel` の SSM トンネル経由）を環境変数で渡す。** 未設定なら Secrets Manager の secret に入っている本番相当のホスト名（ECS/Fargate 用）にそのまま繋ぎに行き、ローカルからは到達できない。

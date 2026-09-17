@@ -10,6 +10,12 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/** 空文字列を未設定として扱う。process.env[name] は空文字列でも定義済み扱いになるため。 */
+function optionalEnv(name: string): string | undefined {
+  const value = process.env[name];
+  return value === undefined || value === '' ? undefined : value;
+}
+
 const dbSecretArn = requireEnv('DB_SECRET_ARN');
 const itemsTableName = requireEnv('ITEMS_TABLE_NAME');
 const itemsQueueUrl = requireEnv('ITEMS_QUEUE_URL');
@@ -17,7 +23,14 @@ const cognitoUserPoolId = requireEnv('COGNITO_USER_POOL_ID');
 const cognitoClientId = requireEnv('COGNITO_CLIENT_ID');
 
 const dbSecret = parseDbSecret(await getSecretValue(dbSecretArn));
-const { db } = createDb(buildConnectionString(dbSecret));
+const dbHost = optionalEnv('DB_HOST');
+const dbPort = optionalEnv('DB_PORT');
+const { db } = createDb(
+  buildConnectionString(dbSecret, {
+    host: dbHost,
+    port: dbPort !== undefined ? Number(dbPort) : undefined,
+  }),
+);
 
 const verifier = CognitoJwtVerifier.create({
   userPoolId: cognitoUserPoolId,
