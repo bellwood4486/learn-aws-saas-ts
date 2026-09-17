@@ -32,6 +32,7 @@ just --list
 | `just up` / `just down` | セッション毎に立てる層（network/data/app/edge）をまとめて apply / destroy |
 | `just leaks` | `down` の後に消し残しリソースを確認する（**必ず実行**） |
 | `just dev-all` | ローカルで api + web を同時起動（api を実AWSのnetwork/data層に繋ぐ場合は下記「ローカルでのフロントエンド確認」を参照） |
+| `just web-deploy` | `apps/web` をビルドしてedge層のS3に同期、CloudFrontキャッシュをinvalidate |
 
 ## コスト運用
 
@@ -67,3 +68,11 @@ just --list
 
 - **`just db-seed` で投入した初期データは `GET /api/items` で 500 エラーになる。** `db-seed` は RDS にしか行を insert せず、DynamoDB 側の status レコードを作らない。`listItems`（M6 で追加）は RDS の全行について DynamoDB の status を要求するため、`db-seed` 由来の行はここで例外を投げる。ブラウザ確認をする際は `db-seed` を実行しない（または先に `items` テーブルを空にする）か、`apps/web` からの作成（`createItem` 経由。RDS + DynamoDB を両方書く）だけで一覧を確認する。
 - **`apps/api` をローカルの `node --watch src/main.ts` で実 AWS の RDS に繋ぐには `DB_HOST=localhost DB_PORT=5432`（`just db-tunnel` の SSM トンネル経由）を環境変数で渡す。** 未設定なら Secrets Manager の secret に入っている本番相当のホスト名（ECS/Fargate 用）にそのまま繋ぎに行き、ローカルからは到達できない。
+
+## CloudFront経由の本番配信確認（M7 実機検証で判明した注意点）
+
+`infra/edge/`（S3 + CloudFront）は常時起動層。フロントを配信し `/api/*` をALB（`network`/`data`/`app`が apply済みのときのみ）にプロキシする。手順・詳細は [`infra/edge/README.md`](infra/edge/README.md) を参照。
+
+- `just up` を実行する前に、`network`/`data`/`app`/`edge` の各層で `terraform init` 済みであること（新規 worktree では全層でやり直しが必要）
+- `just up` 後、`GET /api/items` はRDSが空（`items` テーブル未作成）のため500になる。`just db-tunnel` → `just db-migrate` を実行してから確認する
+- `just up` の `edge` 再apply行にあったバグ（`alb_dns_name` が渡らない）はM7で修正済み。`/api/*` がCloudFront経由で401ではなくエラーになる場合は、`infra/edge` の `terraform apply` の `alb_dns_name` に正しいALB DNS名が渡っているか確認する
