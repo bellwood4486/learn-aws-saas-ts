@@ -16,7 +16,7 @@ up:
     cd infra/network && terraform apply
     cd infra/data && terraform apply
     cd infra/app && terraform apply
-    cd infra/edge && terraform apply -var="alb_dns_name=$(cd infra/app && terraform output -raw alb_dns_name)"
+    cd infra/edge && terraform apply -var="alb_dns_name=$(cd ../app && terraform output -raw alb_dns_name)"
 
 # app を destroy する前に edge を alb_dns_name 空で再 apply し、502 の残骸を防いでから
 # app → data → network の逆順で destroy する
