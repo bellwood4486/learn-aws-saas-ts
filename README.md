@@ -75,4 +75,4 @@ just --list
 
 - `just up` を実行する前に、`network`/`data`/`app`/`edge` の各層で `terraform init` 済みであること（新規 worktree では全層でやり直しが必要）
 - `just up` 後、`GET /api/items` はRDSが空（`items` テーブル未作成）のため500になる。`just db-tunnel` → `just db-migrate` を実行してから確認する
-- `just up`/`just down` の `edge` 再apply行にあったバグ（`alb_dns_name` が渡らない）はM7で修正済み。`/api/*` がCloudFront経由で401ではなくエラーになる場合は、`infra/edge` の `terraform apply` の `alb_dns_name` に正しいALB DNS名が渡っているか確認する
+- `just up` の `edge` 再apply行にあったバグ（`alb_dns_name` が渡らない）はM7で修正済み。`/api/*` がCloudFront経由で401ではなくエラーになる場合は、`infra/edge` の `terraform apply` の `alb_dns_name` に正しいALB DNS名が渡っているか確認する

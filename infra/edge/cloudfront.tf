@@ -35,6 +35,7 @@ resource "aws_cloudfront_distribution" "web" {
   is_ipv6_enabled     = true
   default_root_object = "index.html"
   comment             = "${var.project_name} web"
+  price_class         = "PriceClass_200"
 
   origin {
     origin_id                = "s3-web"
@@ -81,17 +82,12 @@ resource "aws_cloudfront_distribution" "web" {
     }
   }
 
-  # SPAはルーティングライブラリを使わない単一ページだが、
-  # OAC配下のS3は存在しないオブジェクトに403を返す（404ではない）ため、
-  # 両方をindex.htmlにフォールバックさせる。
+  # custom_error_responseはdistribution全体（/api/*も含む）に適用されるため、
+  # 404ルールは追加しない：追加するとAPIの本物の404応答まで200のindex.htmlに
+  # 書き換えてしまう。OAC配下のS3は存在しないオブジェクトに403を返す（404は
+  # 返さない）ため、この403ルールだけでSPAフォールバックは維持できる。
   custom_error_response {
     error_code         = 403
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
-
-  custom_error_response {
-    error_code         = 404
     response_code      = 200
     response_page_path = "/index.html"
   }
