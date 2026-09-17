@@ -178,6 +178,21 @@ db-psql:
     PGSSLMODE=require psql -h localhost -p 5432 -U app -d app
 
 # ------------------------------------------------------------------
+# web — apps/web のビルドとedge層への配信
+# ------------------------------------------------------------------
+
+# apps/web をビルドする（.env.local の VITE_* を埋め込む）
+[group('web')]
+web-build:
+    pnpm --filter @repo/web build
+
+# ビルド成果物をedge層のS3バケットに同期し、CloudFrontのキャッシュをinvalidateする
+[group('web')]
+web-deploy: web-build
+    aws s3 sync apps/web/dist "s3://$(cd infra/edge && terraform output -raw web_bucket)" --delete
+    aws cloudfront create-invalidation --distribution-id "$(cd infra/edge && terraform output -raw cloudfront_distribution_id)" --paths '/*'
+
+# ------------------------------------------------------------------
 # docker — turbo prune → build → ECR push
 # ------------------------------------------------------------------
 
