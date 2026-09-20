@@ -304,7 +304,7 @@ RDS の `manage_master_user_password = true` は近年の定番だが、**この
 | `db` | `db-generate` / `db-migrate` / `db-seed` / `db-psql` | Drizzle と DB 接続 |
 | `docker` | `image-build` / `image-push` | `turbo prune` → build → ECR push |
 | `cost` | `cost-report` / `leaks` | コスト実績と消し残しリソースの検出 |
-| `ci` | `gh-vars` | `terraform output` の値を GitHub Actions の Variables に登録する（M8） |
+| `ci` | `gh-vars` / `gh-subject-prefix` | `terraform output` の値を GitHub Actions の Variables に登録する / OIDC の `sub` の接頭辞を表示する（M8） |
 
 `set dotenv-load` は使わない（`.env` を作らない方針）。環境変数は `mise.toml` の `[env]` で与える。
 
@@ -469,7 +469,9 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 | `github_deploy_api` | `platform/` | `app/` は毎回 destroy されるので、ロールは常時起動層に置く必要がある |
 | `github_deploy_web` | `edge/` | 権限の対象（S3 と CloudFront）が `edge/` にある。provider は `data.aws_iam_openid_connect_provider`（URL 指定）で引き、`terraform_remote_state` は増やさない |
 
-**3 ロールとも信頼ポリシーの `sub` は `repo:<owner>/<repo>:ref:refs/heads/main` のみ。** CI が AWS に触らないので、全ブランチに広げる必要がない。
+**3 ロールとも信頼ポリシーの `sub` は `${sub_claim_prefix}:ref:refs/heads/main` のみ。** CI が AWS に触らないので、全ブランチに広げる必要がない。`sub_claim_prefix` は不変サブジェクトのリポジトリなら `repo:<owner>@<owner_id>/<repo>@<repo_id>`。Terraform では `var.github_subject_prefix`（デフォルト無し）で受ける。
+
+**実機で判明: 不変サブジェクト。** リポジトリの OIDC 設定が `use_immutable_subject: true`（GitHub の新しい既定値）だと、`sub` は `repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:refs/heads/main` になる。旧形式（`repo:<owner>/<repo>:...`）の条件では assume が `Not authorized to perform sts:AssumeRoleWithWebIdentity` で拒否された。ID で固定することで、リネームや同名での作り直しによる乗っ取りも防げる。値は `just gh-subject-prefix`（`GET /repos/{owner}/{repo}/actions/oidc/customization/sub` の `sub_claim_prefix`）で取得する。毎回の `just` 起動で API を叩かないよう、git 管理外の `.mise.local.toml` に `TF_VAR_github_subject_prefix` として置く（`just` は `mise exec --` 経由なので自動で環境変数に入る）。
 
 | ロール | 権限 |
 |---|---|
@@ -631,12 +633,12 @@ apps/web/
 
 設計の詳細は「CI/CD」節。ここでは作業項目だけを挙げる。
 
-- `infra/platform/` に GitHub OIDC provider と `github_publish` / `github_deploy_api` ロール、`infra/edge/` に `github_deploy_web` ロール（provider は data source で参照）。ロール ARN を outputs に出す
+- `infra/platform/` に GitHub OIDC provider と `github_publish` / `github_deploy_api` ロール、`infra/edge/` に `github_deploy_web` ロール（provider は data source で参照）。ロール ARN を outputs に出す。信頼ポリシーの `sub` は `var.github_subject_prefix`（`repo:<owner>@<owner_id>/<repo>@<repo_id>`）+ `:ref:refs/heads/main`
 - `infra/app/ecs.tf` の両 `aws_ecs_service` に `ignore_changes = [task_definition]`
 - `mise.ci.toml`（`AWS_PROFILE` の unset）
-- `justfile`: `image-push` / `web-deploy` を環境変数で上書き可能にし、タグを `git rev-parse --short=7 HEAD` に統一、`gh-vars` を新設
+- `justfile`: `image-push` / `web-deploy` を環境変数で上書き可能にし、タグを `git rev-parse --short=7 HEAD` に統一、`gh-vars` / `gh-subject-prefix` を新設
 - `.github/workflows/` に `ci.yml` / `publish-image.yml` / `deploy-web.yml` / `deploy-api.yml`（`ci` / `publish-image` は ECS が ARM64 なので `ubuntu-24.04-arm`、`ci` は tag の push では動かさない）
-- README に Variables の一覧と初回セットアップ（`gh auth login` → `just gh-vars`）を追記
+- README に Variables の一覧と初回セットアップ（`gh auth login` → `just gh-subject-prefix` の出力を `.mise.local.toml` の `TF_VAR_github_subject_prefix` に設定 → apply → `just gh-vars`）を追記
 
 **（オプション）M9: NAT を VPC エンドポイントに置き換えて比較**
 - Gateway 型(S3/DynamoDB)は無料、Interface 型は各 ~$7-8/月。コストと構成の違いを実測する
@@ -679,7 +681,7 @@ apps/web/
 - **M6** — `just dev-all`（ローカル api + Vite）でブラウザから作成・一覧ができ、ログイン／ログアウトが動く
 - **M7** — CloudFront の URL をブラウザで開いて SPA が表示され、同一オリジンの `/api/items` が**Authorization ヘッダ付きで**叩けて（＝401 にならない）、リロードしても SPA ルーティングが 404 にならない
 - **M8** — 課金セッションを 1 回にまとめて確認する
-  1. `platform/` → `edge/` を apply（OIDC provider と 3 ロール）し、`just gh-vars` で Variables を登録する
+  1. `just gh-subject-prefix` の出力を `.mise.local.toml` の `TF_VAR_github_subject_prefix` に設定してから、`platform/` → `edge/` を apply（OIDC provider と 3 ロール）し、`just gh-vars` で Variables を登録する
   2. `app/` が無い状態で main にマージし、CI が緑になる → `publish-image` が走って ECR に SHA タグが増える → `deploy-web` が走って CloudFront 経由で反映される
   3. `just up`（`image_tag` は発行済みの SHA A）の後、別の SHA B を main に発行し、`deploy-api` を手動実行する。タスク定義のリビジョンが上がり、api / worker の両サービスが安定し、`/healthz` が応答する
   4. `just down` の後に `just leaks` で消し残しがゼロ
