@@ -18,7 +18,8 @@ env:
 jobs:
   publish:
     if: github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+    # ECS タスクが ARM64 なので、arm ランナーでネイティブにビルドして発行する（x86 ランナーだと amd64 イメージになり Fargate で起動しない）
+    runs-on: ubuntu-24.04-arm
     steps:
       # workflow_run は default ブランチの HEAD で動くので、CI が検証した commit を明示して checkout する
       - uses: actions/checkout@v7

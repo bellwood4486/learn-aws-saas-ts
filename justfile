@@ -206,11 +206,12 @@ web-deploy: web-build
 # docker — turbo prune → build → ECR push
 # ------------------------------------------------------------------
 
-# turbo prune で剪定したワークスペースから api/worker 共用イメージをビルドする
+# turbo prune で剪定したワークスペースから api/worker 共用イメージをビルドする。
+# ECS タスクが ARM64 なので、ホストのアーキテクチャによらず arm64 イメージを作る
 [group('docker')]
 image-build:
     pnpm exec turbo prune @repo/api @repo/worker --docker
-    docker build -t learn-aws-saas-ts:local .
+    docker build --platform linux/arm64 -t learn-aws-saas-ts:local .
 
 # commit SHA（7桁）タグで ECR に発行する。同じタグが既にあれば何もしない（ECR は IMMUTABLE なので再 push は失敗する）。
 # ECR_REPOSITORY_URL を環境変数で渡すと terraform output を使わない（CI は tfstate に触れないため）
