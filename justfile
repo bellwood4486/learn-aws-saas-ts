@@ -196,6 +196,7 @@ web-build:
 # WEB_BUCKET / CLOUDFRONT_DISTRIBUTION_ID を環境変数で渡すと terraform output を使わない（CI は tfstate に触れないため）
 [group('web')]
 web-deploy: web-build
+    set -eu; \
     bucket="${WEB_BUCKET:-$(cd infra/edge && terraform output -raw web_bucket)}"; \
     distribution_id="${CLOUDFRONT_DISTRIBUTION_ID:-$(cd infra/edge && terraform output -raw cloudfront_distribution_id)}"; \
     aws s3 sync apps/web/dist "s3://$bucket" --delete; \
@@ -215,6 +216,7 @@ image-build:
 # ECR_REPOSITORY_URL を環境変数で渡すと terraform output を使わない（CI は tfstate に触れないため）
 [group('docker')]
 image-push:
+    set -eu; \
     repo_url="${ECR_REPOSITORY_URL:-$(cd infra/platform && terraform output -raw ecr_repository_url)}"; \
     tag="$(git rev-parse --short=7 HEAD)"; \
     if aws ecr describe-images --repository-name "${repo_url#*/}" --image-ids imageTag="$tag" >/dev/null 2>&1; then \
