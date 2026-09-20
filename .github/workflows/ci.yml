@@ -2,8 +2,11 @@ name: CI
 
 # 検証のみ。AWS には一切触れない（認証情報を持たない）。
 # CD（publish-image / deploy-web）は、この workflow が main で成功したことを起点に動く。
+# tag の push では動かさない（tag 名が `main` だと、後続の workflow_run の `branches: [main]` を
+# すり抜けて OIDC ロールに到達できてしまうため）。
 on:
   push:
+    branches: ['**']
 
 concurrency:
   group: ci-${{ github.ref }}
