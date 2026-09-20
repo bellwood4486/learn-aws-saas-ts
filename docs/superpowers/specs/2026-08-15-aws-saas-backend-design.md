@@ -413,7 +413,7 @@ M0 時点では `routes/health.ts` と `server.ts` / `main.ts` のみ実装済�
 
 **gitleaks は pre-commit 専用、他の4つは pre-commit + CI の両方**で走らせる。理由: シークレットの検出は「そもそもコミットさせない」ことに価値があるので pre-commit の役割。それ以外は pre-commit をスキップした push や PR でも CI が最終防波堤として拾う必要がある。`actionlint` は `.github/workflows/` を編集しないコミットでも毎回走らせる意味が薄いので pre-commit には含めず **CI 専用**にした。
 
-justfile の `check` グループにある `lint` レシピが4種類（Biome / TFLint / hadolint / actionlint）を束ね、`tf` グループの `tf-lint` を内部で呼ぶ。CI (`ci.yml`) は lint についてはこの `just lint` 一発で全部回す。
+justfile の `check` グループにある `lint` レシピが4種類（Biome / TFLint / hadolint / actionlint）を束ね、`tf` グループの `tf-lint` を内部で呼ぶ。CI (`ci.yml`) は lint についてはこの `just lint` 一発で全部回す。Biome は turbo 経由ではなくルートで `biome ci .` を直接呼ぶ（各パッケージに `lint` スクリプトが無く、`turbo run lint` は 0 タスクで終わって Biome が走らないため）。
 
 M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tflint --recursive` clean）。hadolint / actionlint / gitleaks は対象ファイル（Dockerfile / workflow）がまだ無いため、mise でのインストールと `.pre-commit-config.yaml` への配線のみ完了。
 
@@ -427,15 +427,18 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 
 | workflow | 責務 | トリガー | AWS | 依存する層 | assume するロール |
 |---|---|---|---|---|---|
-| `ci.yml` | **検証のみ**。`just typecheck` / `test` / `lint`（Biome + TFLint + hadolint + actionlint）、`terraform fmt -check` / `validate`、`docker build`（push しない） | 全ブランチの `push` | **触らない**（認証情報なし。`permissions: contents: read`） | なし | なし |
+| `ci.yml` | **検証のみ**。`just typecheck` / `test` / `lint`（Biome + TFLint + hadolint + actionlint）、`terraform fmt -check` / `validate`、`docker build`（push しない） | 全ブランチの `push`（**tag は除く**: `branches: ['**']`） | **触らない**（認証情報なし。`permissions: contents: read`） | なし | なし |
 | `publish-image.yml` | `turbo prune` → Docker ビルド → **commit SHA タグ**で ECR に発行 | main の CI 成功後（`workflow_run`） | ECR | `platform/`（常時） | `github_publish` |
 | `deploy-web.yml` | `apps/web` をビルド → S3 に同期 → CloudFront invalidate | main の CI 成功後（`workflow_run`） | S3 / CloudFront | `edge/`（常時） | `github_deploy_web` |
 | `deploy-api.yml` | 発行済みイメージを ECS の api / worker に反映 | `workflow_dispatch`（手動） | ECS | `app/`（セッション毎） | `github_deploy_api` |
+
+**ランナー**: `ci.yml` と `publish-image.yml` は `ubuntu-24.04-arm`、`deploy-web.yml` と `deploy-api.yml` は `ubuntu-latest`。ECS タスクが ARM64（`infra/app/ecs.tf`）なので、CI の `docker build` も発行も arm ランナーで行う（x86 ランナーで発行すると amd64 イメージになり、Fargate で `exec format error` になる）。public リポジトリは arm ランナーが無料。private にする場合は QEMU + buildx（遅い）か、タスク定義を X86_64 に変えて対処する。deploy-web / deploy-api はアーキテクチャに依存しない。
 
 ### 責務の境界
 
 - **CI は AWS に一切触らない。** 認証情報が要らないので、どのブランチでもいつでも走らせられる。CI が緑であることが CD の起点になる
 - **CD は main の CI 成功後にだけ動く。** `workflow_run`（`branches: [main]`、`conclusion == success` を確認）で連鎖させ、`actions/checkout` には `workflow_run.head_sha` を渡す。`workflow_run` は default ブランチの workflow 定義で動くので、main 以外の未レビューのコードが権限付きで走ることはない
+- **`ci.yml` は tag の push では動かさない**（`on.push.branches: ['**']`）。tag の push では `workflow_run.head_branch` が tag 名になるため、`main` という名前の tag を未レビューの commit に push されると、CI が通った後に `workflow_run` の `branches: [main]` をすり抜けて OIDC ロールに到達できてしまう。多層防御として、`publish-image` / `deploy-web` のジョブには `workflow_run.event == 'push'` と `workflow_run.head_repository.full_name == github.repository`（push で起動した、このリポジトリ自身の CI だけ）の `if:` も付ける
 - **「イメージの発行」と「ECS への反映」は別の関心事。** `publish-image` は `platform/`（常時存在）だけに依存するので自動でよい。`deploy-api` は「発行済みの SHA を選んで反映する」だけなので、ロールバックも同じ操作になる
 - **`deploy-web` を自動にできるのは `edge/` が常時起動層だから。** `workflow_run` には `paths` フィルタがなく、main の CI が通るたびに走る。同期は差分だけ、invalidate は `/*` の 1 パスなので実害は小さく、冪等
 - **トレードオフ**: フィーチャーブランチではイメージが作られない（未マージのブランチを ECS に載せて試すことはできない）。ECR の lifecycle（最新 10 個）が main のイメージだけを数えるので、こちらは利点でもある
@@ -443,12 +446,14 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 ### publish-image
 
 - **イメージタグに `latest` を使わない。** commit SHA（`git rev-parse --short=7 HEAD`）でタグ付けし、どの SHA が動いているか特定できる／ロールバックできる状態にする。`--short` の桁数は shallow clone とローカルで揺れうるので、**`=7` で固定**し、ローカルの `just image-push` も同じ式に揃える
+- イメージは `docker build --platform linux/arm64`（`just image-build`）で作る。ECS タスクが ARM64 なので、ホストのアーキテクチャによらず arm64 にそろえる。発行は arm ランナー（`ubuntu-24.04-arm`）でネイティブにビルドする
 - ECR は `IMMUTABLE` なので、同じ SHA を再 push すると落ちる。push 前に `aws ecr describe-images` で既存タグを確認し、あればスキップする（冪等）
 - 二度ビルド（CI の `docker build` と publish）になるのは許容する。CI の役割は「壊れた変更を main に入れない」こと
 
 ### deploy-api
 
 - 入力は `image_tag`（省略時は起動した ref の HEAD の 7 桁 SHA）
+- 最初のステップで **main から起動されていること**を確認する。OIDC ロールの信頼ポリシーが `refs/heads/main` のみなので、他の ref から起動すると AssumeRole で分かりにくく失敗する。それを「main から実行してください」と分かるエラーにする
 - 最初に **ECR にそのタグが存在するか**と **ECS サービスが ACTIVE か**を確認し、`app/` が無ければ「`just up` が先」と分かるメッセージで落とす
 - **api と worker はイメージを共用するので両方を更新する**（`strategy.matrix` で並列）。各サービスで `aws ecs describe-task-definition`（現行定義を取得）→ `aws-actions/amazon-ecs-render-task-definition`（イメージだけ差し替え）→ `aws-actions/amazon-ecs-deploy-task-definition`（`wait-for-service-stability: true`）
 - タスク定義は Terraform が所有しているため、新リビジョンを登録すると state とずれる。`infra/app/ecs.tf` の両 `aws_ecs_service` に **`lifecycle { ignore_changes = [task_definition] }`** を足す。`just up` は `image_tag` を明示して apply するので影響しない
@@ -470,11 +475,11 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 |---|---|
 | `github_publish` | ECR の push 系（`GetAuthorizationToken` は `*`、それ以外は対象リポジトリの ARN）と `DescribeImages` |
 | `github_deploy_web` | 対象バケットへの `s3:PutObject` / `DeleteObject` / `ListBucket`、対象 distribution への `cloudfront:CreateInvalidation` |
-| `github_deploy_api` | `ecr:DescribeImages`、`ecs:DescribeTaskDefinition` / `RegisterTaskDefinition`（リソース指定不可のため `*`）、`ecs:UpdateService` / `DescribeServices`（クラスタ `learn-aws-saas-ts`・サービス `learn-aws-saas-ts-{api,worker}` に限定）、`iam:PassRole`（`role/learn-aws-saas-ts-*` に `iam:PassedToService = ecs-tasks.amazonaws.com` の条件。対象は destroy 済みで存在しない時期があるため名前パターンで絞る） |
+| `github_deploy_api` | `ecr:DescribeImages`、`ecs:DescribeTaskDefinition` / `RegisterTaskDefinition`（リソース指定不可のため `*`）、`ecs:UpdateService` / `DescribeServices`（クラスタ `learn-aws-saas-ts` のサービス `learn-aws-saas-ts-api` / `learn-aws-saas-ts-worker` を明示）、`iam:PassRole`（`role/learn-aws-saas-ts-ecs-execution` / `-api-task` / `-worker-task` を明示し、`iam:PassedToService = ecs-tasks.amazonaws.com` の条件を付ける。IAM ポリシーは存在しないロールの ARN も書けるので、app 層が destroy 済みでも問題ない。ワイルドカードにすると `github_*` ロール自身にもマッチしてしまう。ロール名を変えるときは `infra/platform/iam.tf` も合わせる） |
 
 ### 値の受け渡し
 
-CI は tfstate に触れない。各層の値は **GitHub Actions の Variables**（非秘匿）に一度登録する。対象はどれも常時起動層（`platform/` / `edge/`）の値で、セッションをまたいで変わらない。`just gh-vars` が `terraform output` から `gh variable set` で登録する（`gh` は mise の管轄外で、README に前提として記載する）。
+CI は tfstate に触れない。各層の値は **GitHub Actions の Variables**（非秘匿）に一度登録する。対象はどれも常時起動層（`platform/` / `edge/`）の値で、セッションをまたいで変わらない。`just gh-vars` が `terraform output` から `gh variable set` で登録する（`gh` は mise の管轄外で、README に前提として記載する）。先に 7 値をすべて取得してから登録するので、どれかの output が取れなければ何も登録しない（空の値を登録しない）。
 
 | Variable | 用途 |
 |---|---|
@@ -630,7 +635,7 @@ apps/web/
 - `infra/app/ecs.tf` の両 `aws_ecs_service` に `ignore_changes = [task_definition]`
 - `mise.ci.toml`（`AWS_PROFILE` の unset）
 - `justfile`: `image-push` / `web-deploy` を環境変数で上書き可能にし、タグを `git rev-parse --short=7 HEAD` に統一、`gh-vars` を新設
-- `.github/workflows/` に `ci.yml` / `publish-image.yml` / `deploy-web.yml` / `deploy-api.yml`
+- `.github/workflows/` に `ci.yml` / `publish-image.yml` / `deploy-web.yml` / `deploy-api.yml`（`ci` / `publish-image` は ECS が ARM64 なので `ubuntu-24.04-arm`、`ci` は tag の push では動かさない）
 - README に Variables の一覧と初回セットアップ（`gh auth login` → `just gh-vars`）を追記
 
 **（オプション）M9: NAT を VPC エンドポイントに置き換えて比較**
