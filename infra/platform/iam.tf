@@ -93,16 +93,23 @@ data "aws_iam_policy_document" "github_deploy_api" {
     sid     = "EcsService"
     actions = ["ecs:DescribeServices", "ecs:UpdateService"]
     resources = [
-      "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${var.project_name}/${var.project_name}-*",
+      "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${var.project_name}/${var.project_name}-api",
+      "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${var.project_name}/${var.project_name}-worker",
     ]
   }
 
-  # app 層のロール（-ecs-execution / -api-task / -worker-task）は destroy 済みで存在しない時期があるため、
-  # ARN ではなく名前パターンで絞る。ecs-tasks にしか渡せないよう iam:PassedToService で限定する。
+  # IAM ポリシーは存在しないロールの ARN も書けるので、app 層が destroy 済みでも問題ない。
+  # ワイルドカード（role/${var.project_name}-*）にすると github_* ロール自身にもマッチしてしまうため、
+  # infra/app/iam.tf のロール名を明示する。ロール名を変えるときはここも合わせる。
+  # ecs-tasks にしか渡せないよう iam:PassedToService で限定する。
   statement {
-    sid       = "PassTaskRoles"
-    actions   = ["iam:PassRole"]
-    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-*"]
+    sid     = "PassTaskRoles"
+    actions = ["iam:PassRole"]
+    resources = [
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-ecs-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-api-task",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-worker-task",
+    ]
 
     condition {
       test     = "StringEquals"
