@@ -629,16 +629,27 @@ apps/web/
 - ➖ Cognito のコールバック URL の設定は**不要になった**（M6 で直接ログインに決めたためコールバック URL 自体を使わない。実装計画 `2026-09-17-m7-edge-layer.md` の Self-Review 参照）
 - 実機検証の結果は `infra/edge/README.md` に記録済み
 
-**M8: CI/CD — 責務を分けた 4 workflow**
+**M8: CI/CD — 責務を分けた 4 workflow — 完了**
 
 設計の詳細は「CI/CD」節。ここでは作業項目だけを挙げる。
 
-- `infra/platform/` に GitHub OIDC provider と `github_publish` / `github_deploy_api` ロール、`infra/edge/` に `github_deploy_web` ロール（provider は data source で参照）。ロール ARN を outputs に出す。信頼ポリシーの `sub` は `var.github_subject_prefix`（`repo:<owner>@<owner_id>/<repo>@<repo_id>`）+ `:ref:refs/heads/main`
-- `infra/app/ecs.tf` の両 `aws_ecs_service` に `ignore_changes = [task_definition]`
-- `mise.ci.toml`（`AWS_PROFILE` の unset）
-- `justfile`: `image-push` / `web-deploy` を環境変数で上書き可能にし、タグを `git rev-parse --short=7 HEAD` に統一、`gh-vars` / `gh-subject-prefix` を新設
-- `.github/workflows/` に `ci.yml` / `publish-image.yml` / `deploy-web.yml` / `deploy-api.yml`（`ci` / `publish-image` は ECS が ARM64 なので `ubuntu-24.04-arm`、`ci` は tag の push では動かさない）
-- README に Variables の一覧と初回セットアップ（`gh auth login` → `just gh-subject-prefix` の出力を `.mise.local.toml` の `TF_VAR_github_subject_prefix` に設定 → apply → `just gh-vars`）を追記
+- ✅ `infra/platform/` に GitHub OIDC provider と `github_publish` / `github_deploy_api` ロール、`infra/edge/` に `github_deploy_web` ロール（provider は data source で参照）。ロール ARN を outputs に出す。信頼ポリシーの `sub` は `var.github_subject_prefix`（`repo:<owner>@<owner_id>/<repo>@<repo_id>`）+ `:ref:refs/heads/main`
+- ✅ `infra/app/ecs.tf` の両 `aws_ecs_service` に `ignore_changes = [task_definition]`
+- ✅ `mise.ci.toml`（`AWS_PROFILE` の unset）
+- ✅ `justfile`: `image-push` / `web-deploy` を環境変数で上書き可能にし、タグを `git rev-parse --short=7 HEAD` に統一、`gh-vars` / `gh-subject-prefix` を新設
+- ✅ `.github/workflows/` に `ci.yml` / `publish-image.yml` / `deploy-web.yml` / `deploy-api.yml`（`ci` / `publish-image` は ECS が ARM64 なので `ubuntu-24.04-arm`、`ci` は tag の push では動かさない）
+- ✅ README に Variables の一覧と初回セットアップ（`gh auth login` → `just gh-subject-prefix` の出力を `.mise.local.toml` の `TF_VAR_github_subject_prefix` に設定 → apply → `just gh-vars`）を追記
+
+実機検証の結果:
+
+- ブランチの push で `ci.yml` が初回から緑（arm ランナー `ubuntu-24.04-arm` で約 2 分。mise は `mise.ci.toml` を問題なく読み込み、tflint の plugin 取得も通った）。`just lint` に Biome が入って実際に動くようになった（未使用 import の既存警告が 1 件出るが失敗はしない）
+- main での初回実行は、OIDC の `sub` が不変サブジェクト形式（所有者/リポジトリの ID 入り）で信頼ポリシーと一致せず `Not authorized to perform sts:AssumeRoleWithWebIdentity` で失敗した。信頼ポリシーを `var.github_subject_prefix` に置き換えて解消（詳細は上の「認証（GitHub OIDC）」）。修正後、失敗した 2 つの run の再実行と、修正 PR のマージ後の連鎖実行がどちらも成功した
+- `publish-image`: ECR に 7 桁 SHA タグが発行され、イメージは linux/arm64。同じ SHA の再実行は `skip: ... は発行済み` で成功する（IMMUTABLE でも落ちない）。x86 のランナーで作った amd64 イメージは ECS（ARM64）で動かないため、arm ランナーにしたこと（最終レビューで発覚）が、実際に CI が作ったイメージが Fargate で起動することで裏づけられた（`/healthz` が 200）
+- `deploy-web`: CloudFront 経由で SPA が返り、存在しないパスも 403→`index.html` のフォールバックで 200、CI のビルドに `VITE_COGNITO_CLIENT_ID` が埋め込まれている。ALB が無いときの `/api/*` は SPA の HTML にフォールバックする
+- `deploy-api`（課金セッション 1 回）: `just up`（api/worker とも `image_tag` は 1 つ目の SHA）の後、2 つ目の SHA で実行し、api・worker の両方でタスク定義のリビジョンが 4 → 5 に上がり、イメージだけが差し替わって、環境変数・ロール・ARM64 は引き継がれた。ALB の `/healthz` は 200、`terraform plan app` は `No changes`（`ignore_changes = [task_definition]` が効いている）。`iam:PassRole` の明示 ARN と、追加の IAM 権限なしで `amazon-ecs-deploy-task-definition` が動くことも確認できた
+- 失敗系: 存在しない SHA は `ECR に <SHA> がありません…`、`app/` が無い状態は `<サービス> が ACTIVE ではありません（status=INACTIVE）。app 層が apply されていません…` で、どちらもサービスに触れずに分かるメッセージで失敗する
+- `just down` の後の `just leaks` は、platform 層の常設シークレット以外すべて空。今月の累計コストは約 $1（Cost Explorer の反映遅れを含む）
+- edge の初回 apply で、main に取り込み済みだった CloudFront の修正（`PriceClass_200` と 404 ルールの削除）が実環境に未適用だったため、同時に反映された
 
 **（オプション）M9: NAT を VPC エンドポイントに置き換えて比較**
 - Gateway 型(S3/DynamoDB)は無料、Interface 型は各 ~$7-8/月。コストと構成の違いを実測する
@@ -684,7 +695,7 @@ apps/web/
   1. `just gh-subject-prefix` の出力を `.mise.local.toml` の `TF_VAR_github_subject_prefix` に設定してから、`platform/` → `edge/` を apply（OIDC provider と 3 ロール）し、`just gh-vars` で Variables を登録する
   2. `app/` が無い状態で main にマージし、CI が緑になる → `publish-image` が走って ECR に SHA タグが増える → `deploy-web` が走って CloudFront 経由で反映される
   3. `just up`（`image_tag` は発行済みの SHA A）の後、別の SHA B を main に発行し、`deploy-api` を手動実行する。タスク定義のリビジョンが上がり、api / worker の両サービスが安定し、`/healthz` が応答する
-  4. `just down` の後に `just leaks` で消し残しがゼロ
+  4. `just down` の後に `just leaks` で消し残しがゼロ （確認済み）
 
 **コスト検証（毎セッション必須）**: `just down` の後に `just leaks` と `just cost-report` を実行し、NAT / EIP / ALB / RDS / 削除待ちシークレットがゼロであることを確認する。
 
