@@ -6,6 +6,11 @@ set shell := ["mise", "exec", "--", "sh", "-c"]
 
 infra_layers := "platform edge network data app"
 
+# GitHub OIDC の信頼ポリシー（sub 条件）に使う "<owner>/<repo>"。
+# origin の URL から導出して Terraform に渡す（ファイルに owner 名を直書きしないため）。
+# 宣言していない層の TF_VAR_* は Terraform に無視されるので、全レシピに export してよい。
+export TF_VAR_github_repository := `git remote get-url origin | sed -E 's#^(git@github.com:|https://github.com/)##; s#\.git$##'`
+
 # ------------------------------------------------------------------
 # session — 層をまたぐ apply / destroy のオーケストレーション
 # ------------------------------------------------------------------
@@ -181,16 +186,20 @@ db-psql:
 # web — apps/web のビルドとedge層への配信
 # ------------------------------------------------------------------
 
-# apps/web をビルドする（.env.local の VITE_* を埋め込む）
+# apps/web をビルドする（.env.local の VITE_* を埋め込む。CI では workflow の env で渡す）。
+# turbo 経由にして、依存する @repo/contracts の dist を先にビルドさせる
 [group('web')]
 web-build:
-    pnpm --filter @repo/web build
+    pnpm exec turbo run build --filter=@repo/web
 
-# ビルド成果物をedge層のS3バケットに同期し、CloudFrontのキャッシュをinvalidateする
+# ビルド成果物をedge層のS3バケットに同期し、CloudFrontのキャッシュをinvalidateする。
+# WEB_BUCKET / CLOUDFRONT_DISTRIBUTION_ID を環境変数で渡すと terraform output を使わない（CI は tfstate に触れないため）
 [group('web')]
 web-deploy: web-build
-    aws s3 sync apps/web/dist "s3://$(cd infra/edge && terraform output -raw web_bucket)" --delete
-    aws cloudfront create-invalidation --distribution-id "$(cd infra/edge && terraform output -raw cloudfront_distribution_id)" --paths '/*'
+    bucket="${WEB_BUCKET:-$(cd infra/edge && terraform output -raw web_bucket)}"; \
+    distribution_id="${CLOUDFRONT_DISTRIBUTION_ID:-$(cd infra/edge && terraform output -raw cloudfront_distribution_id)}"; \
+    aws s3 sync apps/web/dist "s3://$bucket" --delete; \
+    aws cloudfront create-invalidation --distribution-id "$distribution_id" --paths '/*'
 
 # ------------------------------------------------------------------
 # docker — turbo prune → build → ECR push
@@ -202,12 +211,19 @@ image-build:
     pnpm exec turbo prune @repo/api @repo/worker --docker
     docker build -t learn-aws-saas-ts:local .
 
-# commit SHA タグで ECR に push する
+# commit SHA（7桁）タグで ECR に発行する。同じタグが既にあれば何もしない（ECR は IMMUTABLE なので再 push は失敗する）。
+# ECR_REPOSITORY_URL を環境変数で渡すと terraform output を使わない（CI は tfstate に触れないため）
 [group('docker')]
 image-push:
-    aws ecr get-login-password | docker login --username AWS --password-stdin "$(cd infra/platform && terraform output -raw ecr_repository_url | cut -d/ -f1)"
-    docker tag learn-aws-saas-ts:local "$(cd infra/platform && terraform output -raw ecr_repository_url):$(git rev-parse --short HEAD)"
-    docker push "$(cd infra/platform && terraform output -raw ecr_repository_url):$(git rev-parse --short HEAD)"
+    repo_url="${ECR_REPOSITORY_URL:-$(cd infra/platform && terraform output -raw ecr_repository_url)}"; \
+    tag="$(git rev-parse --short=7 HEAD)"; \
+    if aws ecr describe-images --repository-name "${repo_url#*/}" --image-ids imageTag="$tag" >/dev/null 2>&1; then \
+        echo "skip: $repo_url:$tag は発行済み"; \
+    else \
+        aws ecr get-login-password | docker login --username AWS --password-stdin "${repo_url%%/*}" && \
+        docker tag learn-aws-saas-ts:local "$repo_url:$tag" && \
+        docker push "$repo_url:$tag"; \
+    fi
 
 # ------------------------------------------------------------------
 # cost — コスト実績と消し残しリソースの検出
