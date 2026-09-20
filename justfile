@@ -119,7 +119,7 @@ typecheck:
 # Biome + tf-lint + hadolint + actionlint をまとめて実行する
 [group('check')]
 lint:
-    pnpm exec turbo run lint
+    pnpm exec biome ci .
     just tf-lint
     hadolint Dockerfile
     actionlint
