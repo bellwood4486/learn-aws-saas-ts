@@ -53,9 +53,15 @@ CI（検証）と CD（発行・反映）を別の workflow に分け、CD は�
 ### 初回セットアップ
 
 1. `gh auth login`（`gh` は mise の管轄外。`brew install gh`）
-2. `just tf-apply platform` → `just tf-apply edge`（OIDC provider とロールを作る。edge は platform が作った OIDC provider を参照するため、**apply 順は platform → edge**）
+2. `just gh-subject-prefix` の出力を、git 管理外の `.mise.local.toml` に設定する。例:
+   ```toml
+   [env]
+   TF_VAR_github_subject_prefix = "<just gh-subject-prefix の出力>"
+   ```
+   （設定後に `mise trust` が要ることがある）。リポジトリの OIDC 設定が不変サブジェクト（GitHub の新しい既定値）だと、`sub` に所有者/リポジトリの ID が入る（`repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:refs/heads/main`）。名前だけの条件では assume が `Not authorized` で拒否されるため、この値を信頼ポリシーに渡す
+3. `just tf-apply platform` → `just tf-apply edge`（OIDC provider とロールを作る。edge は platform が作った OIDC provider を参照するため、**apply 順は platform → edge**）
    - アカウントに GitHub の OIDC provider が既にある場合は、先に `terraform import aws_iam_openid_connect_provider.github <ARN>` で取り込む（詳細は [`infra/platform/README.md`](infra/platform/README.md)）
-3. `just gh-vars`（ロール ARN・ECR URL・バケット名などを GitHub Actions の Variables に登録する。すべて非秘匿の値で、Secrets は使わない）
+4. `just gh-vars`（ロール ARN・ECR URL・バケット名などを GitHub Actions の Variables に登録する。すべて非秘匿の値で、Secrets は使わない）
 
 ### api を ECS に反映する
 
@@ -68,7 +74,7 @@ CI（検証）と CD（発行・反映）を別の workflow に分け、CD は�
 
 ### 注意
 
-- `terraform` を直接叩くとき、platform / edge は `TF_VAR_github_repository`（`<owner>/<repo>`）が要る。`just` 経由なら justfile が origin の URL から導出して渡す
+- platform / edge は `TF_VAR_github_subject_prefix` が要る（`.mise.local.toml` から `mise exec` 経由で入る）。`just` を経由せず `terraform` を直接叩くときも、`mise exec --` 越しに、または同じ環境変数を渡す
 - `mise.toml` の `AWS_PROFILE=personal` は外から渡した環境変数を上書きするため、CI では `MISE_ENV=ci`（`mise.ci.toml`）で unset している
 - フィーチャーブランチではイメージは発行されない（main の CI 成功後のみ）
 - ECR は最新 10 イメージだけ保持する。`just up` したセッション中に main へ 10 コミット以上入ると、稼働中のタグが消えて、タスク再起動時に pull に失敗しうる

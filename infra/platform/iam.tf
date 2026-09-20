@@ -8,6 +8,8 @@ resource "aws_iam_openid_connect_provider" "github" {
 
 # platform 層の 2 ロールに共通の信頼ポリシー。main ブランチで動く workflow だけが assume できる。
 # workflow_run / workflow_dispatch のどちらで起動しても、main 上の実行なら sub は同じ形になる。
+# sub は GitHub の OIDC の sub クレームの接頭辞（var.github_subject_prefix。不変サブジェクトなら所有者/リポジトリの ID 入り）
+# + `:ref:refs/heads/main`。名前ではなく ID で固定するので、リポジトリのリネームや同名での作り直しに乗っ取られない。
 data "aws_iam_policy_document" "github_trust" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -26,7 +28,7 @@ data "aws_iam_policy_document" "github_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:ref:refs/heads/main"]
+      values   = ["${var.github_subject_prefix}:ref:refs/heads/main"]
     }
   }
 }

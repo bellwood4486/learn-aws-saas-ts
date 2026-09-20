@@ -25,7 +25,7 @@
 
 ## 注意
 
-- **GitHub OIDC provider と CI/CD 用ロール 2 本（`github_publish` / `github_deploy_api`）はこの層にある。** `github_deploy_web` は権限の対象（S3 / CloudFront）と同じ `infra/edge/` にある。3 ロールとも信頼ポリシーの `sub` は `repo:<owner>/<repo>:ref:refs/heads/main` のみ。`<owner>/<repo>` は `var.github_repository`（デフォルト無し）で受け、justfile が origin の URL から `TF_VAR_github_repository` として渡す。terraform を直接叩くときは同じ環境変数を渡す
+- **GitHub OIDC provider と CI/CD 用ロール 2 本（`github_publish` / `github_deploy_api`）はこの層にある。** `github_deploy_web` は権限の対象（S3 / CloudFront）と同じ `infra/edge/` にある。3 ロールとも信頼ポリシーの `sub` は `repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:refs/heads/main` のみ（GitHub の不変サブジェクト。名前ではなく ID で固定する）。`repo:<owner>@<owner_id>/<repo>@<repo_id>` は `var.github_subject_prefix`（デフォルト無し）で受け、`just gh-subject-prefix` で取得した値を git 管理外の `.mise.local.toml` の `TF_VAR_github_subject_prefix` に設定して渡す。terraform を直接叩くときも同じ環境変数を渡す
 - OIDC provider はアカウントに同じ URL のものを 1 つしか作れない。既に存在する場合は `terraform import aws_iam_openid_connect_provider.github <ARN>` で取り込む
 - **`edge/` はこの層の OIDC provider を data source で参照するため、apply 順は `platform/` → `edge/`**
 - アプリ用シークレットの値はダミー（`REPLACE_ME`）。実際の外部 API キーは持たない

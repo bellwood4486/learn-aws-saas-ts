@@ -21,7 +21,7 @@ app層が未apply、またはdestroy済みのときはこの変数を空文字�
 
 ## CI/CD 用ロール
 
-`github_deploy_web` は deploy-web.yml が OIDC で assume するロール。権限はこの層のバケットへの `s3:ListBucket` / `PutObject` / `DeleteObject` と、この distribution への `cloudfront:CreateInvalidation` だけ。信頼ポリシーの `sub` は `repo:<owner>/<repo>:ref:refs/heads/main` のみ（`<owner>/<repo>` は `var.github_repository`。justfile が `TF_VAR_github_repository` で渡す）。ARN は output `github_deploy_web_role_arn`。
+`github_deploy_web` は deploy-web.yml が OIDC で assume するロール。権限はこの層のバケットへの `s3:ListBucket` / `PutObject` / `DeleteObject` と、この distribution への `cloudfront:CreateInvalidation` だけ。信頼ポリシーの `sub` は `repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:refs/heads/main` のみ（`repo:<owner>@<owner_id>/<repo>@<repo_id>` は `var.github_subject_prefix`。`.mise.local.toml` の `TF_VAR_github_subject_prefix` で渡す）。ARN は output `github_deploy_web_role_arn`。
 
 ## CloudFrontのdestroyについて
 
