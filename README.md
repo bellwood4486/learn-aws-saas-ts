@@ -78,6 +78,8 @@ CI（検証）と CD（発行・反映）を別の workflow に分け、CD は�
 - `mise.toml` の `AWS_PROFILE=personal` は外から渡した環境変数を上書きするため、CI では `MISE_ENV=ci`（`mise.ci.toml`）で unset している
 - フィーチャーブランチではイメージは発行されない（main の CI 成功後のみ）
 - ECR は最新 10 イメージだけ保持する。`just up` したセッション中に main へ 10 コミット以上入ると、稼働中のタグが消えて、タスク再起動時に pull に失敗しうる
+- `just tf-validate`（各層を `terraform init -backend=false` で検証する）を実行した後の層は S3 backend の初期化が外れる。その状態で `just up` を実行すると `Error: Backend initialization required` で止まる。`just up` は各層を `init` しないので、`just up` の前に `just tf-plan <layer>`（`init -backend-config=...` 付き）などで初期化し直す
+- main へのマージで走る `publish-image` は、同じ 7 桁 SHA が ECR にあれば push をスキップするので、失敗した run を再実行しても安全。`deploy-api` はマージ後に発行された SHA を `image_tag` に指定して使う（`aws ecr describe-images --repository-name learn-aws-saas-ts --query 'sort_by(imageDetails,&imagePushedAt)[].imageTags'` で確認できる）
 
 ## コスト運用
 
