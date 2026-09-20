@@ -9,7 +9,7 @@ infra_layers := "platform edge network data app"
 # GitHub OIDC の信頼ポリシー（sub 条件）に使う "<owner>/<repo>"。
 # origin の URL から導出して Terraform に渡す（ファイルに owner 名を直書きしないため）。
 # 宣言していない層の TF_VAR_* は Terraform に無視されるので、全レシピに export してよい。
-export TF_VAR_github_repository := `git remote get-url origin | sed -E 's#^(git@github.com:|https://github.com/)##; s#\.git$##'`
+export TF_VAR_github_repository := `git remote get-url origin | sed -E 's#^.*github.com[:/]##; s#\.git$##'`
 
 # ------------------------------------------------------------------
 # session — 層をまたぐ apply / destroy のオーケストレーション
@@ -254,16 +254,25 @@ leaks:
 # ci — GitHub Actions との連携
 # ------------------------------------------------------------------
 
-# terraform output の値を GitHub Actions の Variables に登録する。
+# 前提: gh auth login 済み（gh は mise の管轄外。brew で導入する）。
 # CI は tfstate に触れないため、常時起動層（platform / edge）の値を一度ここから渡す。
 # 値はセッションをまたいで変わらないので、ロールやバケットを作り直したときだけ再実行する。
-# 前提: gh auth login 済み（gh は mise の管轄外。brew で導入する）
+# どれかの output が取れなければ何も登録しない（先に全値を取得してから登録する）。
+# terraform output の値を GitHub Actions の Variables に登録する
 [group('ci')]
 gh-vars:
-    gh variable set AWS_ROLE_ARN_PUBLISH --body "$(cd infra/platform && terraform output -raw github_publish_role_arn)"
-    gh variable set AWS_ROLE_ARN_DEPLOY_API --body "$(cd infra/platform && terraform output -raw github_deploy_api_role_arn)"
-    gh variable set ECR_REPOSITORY_URL --body "$(cd infra/platform && terraform output -raw ecr_repository_url)"
-    gh variable set COGNITO_CLIENT_ID --body "$(cd infra/platform && terraform output -raw cognito_user_pool_client_id)"
-    gh variable set AWS_ROLE_ARN_DEPLOY_WEB --body "$(cd infra/edge && terraform output -raw github_deploy_web_role_arn)"
-    gh variable set WEB_BUCKET --body "$(cd infra/edge && terraform output -raw web_bucket)"
-    gh variable set CLOUDFRONT_DISTRIBUTION_ID --body "$(cd infra/edge && terraform output -raw cloudfront_distribution_id)"
+    set -eu; \
+    publish_role="$(cd infra/platform && terraform output -raw github_publish_role_arn)"; \
+    deploy_api_role="$(cd infra/platform && terraform output -raw github_deploy_api_role_arn)"; \
+    ecr_url="$(cd infra/platform && terraform output -raw ecr_repository_url)"; \
+    cognito_client_id="$(cd infra/platform && terraform output -raw cognito_user_pool_client_id)"; \
+    deploy_web_role="$(cd infra/edge && terraform output -raw github_deploy_web_role_arn)"; \
+    web_bucket="$(cd infra/edge && terraform output -raw web_bucket)"; \
+    distribution_id="$(cd infra/edge && terraform output -raw cloudfront_distribution_id)"; \
+    gh variable set AWS_ROLE_ARN_PUBLISH --body "$publish_role"; \
+    gh variable set AWS_ROLE_ARN_DEPLOY_API --body "$deploy_api_role"; \
+    gh variable set ECR_REPOSITORY_URL --body "$ecr_url"; \
+    gh variable set COGNITO_CLIENT_ID --body "$cognito_client_id"; \
+    gh variable set AWS_ROLE_ARN_DEPLOY_WEB --body "$deploy_web_role"; \
+    gh variable set WEB_BUCKET --body "$web_bucket"; \
+    gh variable set CLOUDFRONT_DISTRIBUTION_ID --body "$distribution_id"

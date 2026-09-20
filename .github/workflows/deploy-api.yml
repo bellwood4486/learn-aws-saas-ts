@@ -29,6 +29,15 @@ jobs:
     env:
       SERVICE: learn-aws-saas-ts-${{ matrix.service }}
     steps:
+      # OIDC ロールの信頼ポリシーが refs/heads/main のみなので、他の ref から起動すると
+      # AssumeRole で分かりにくく失敗する。最初に分かるエラーにする
+      - name: main から実行されていることを確認する
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::deploy-api は main から実行してください（OIDC ロールの信頼ポリシーが main のみのため）: $GITHUB_REF"
+            exit 1
+          fi
+
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN_DEPLOY_API }}
