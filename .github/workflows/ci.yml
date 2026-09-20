@@ -1,0 +1,50 @@
+name: CI
+
+# 検証のみ。AWS には一切触れない（認証情報を持たない）。
+# CD（publish-image / deploy-web）は、この workflow が main で成功したことを起点に動く。
+# tag の push では動かさない（tag 名が `main` だと、後続の workflow_run の `branches: [main]` を
+# すり抜けて OIDC ロールに到達できてしまうため）。
+on:
+  push:
+    branches: ['**']
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # mise.toml の AWS_PROFILE=personal を unset する（mise.ci.toml）
+  MISE_ENV: ci
+
+jobs:
+  ci:
+    # ECS タスクが ARM64 なので、CI の `docker build` も同じアーキテクチャで検証する（public リポジトリは arm ランナーが無料）
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      # mise.toml が固定したツール（node / pnpm / terraform / just / tflint / hadolint / actionlint ...）を導入する
+      - uses: jdx/mise-action@v4
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: just typecheck
+      - run: just test
+
+      # tflint の AWS ルールセット（plugin）を取得する。GitHub API の rate limit を避けるため token を渡す
+      - name: tflint --init
+        run: cd infra && tflint --init --config "$(pwd)/.tflint.hcl"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # Biome + TFLint + hadolint + actionlint
+      - run: just lint
+
+      # terraform fmt -check と全層の validate
+      - run: just tf-validate
+
+      # push はしない。Dockerfile が壊れた変更を main に入れないための確認
+      - run: just image-build

@@ -33,6 +33,45 @@ just --list
 | `just leaks` | `down` の後に消し残しリソースを確認する（**必ず実行**） |
 | `just dev-all` | ローカルで api + web を同時起動（api を実AWSのnetwork/data層に繋ぐ場合は下記「ローカルでのフロントエンド確認」を参照） |
 | `just web-deploy` | `apps/web` をビルドしてedge層のS3に同期、CloudFrontキャッシュをinvalidate |
+| `just gh-vars` | `terraform output` の値を GitHub Actions の Variables に登録する（初回とロール/バケットの作り直し時） |
+
+## CI/CD（M8）
+
+CI（検証）と CD（発行・反映）を別の workflow に分け、CD は依存するインフラのライフサイクルで分けている。詳しい設計は spec の「CI/CD」節を参照。
+
+| workflow | 責務 | トリガー | AWS |
+|---|---|---|---|
+| `ci.yml` | 検証のみ（typecheck / test / lint / terraform validate / docker build） | 全ブランチの push | 触らない |
+| `publish-image.yml` | api/worker イメージを 7 桁 commit SHA タグで ECR に発行 | main の CI 成功後 | ECR |
+| `deploy-web.yml` | `apps/web` を S3 に同期し CloudFront を invalidate | main の CI 成功後 | S3 / CloudFront |
+| `deploy-api.yml` | 発行済みイメージを ECS の api / worker に反映 | 手動（`workflow_dispatch`） | ECS |
+
+`ci` / `publish-image` は arm ランナー（`ubuntu-24.04-arm`）で動く。ECS タスクが ARM64 なので、イメージも arm64 で作る必要があるため（`just image-build` も `--platform linux/arm64`）。`deploy-web` / `deploy-api` は `ubuntu-latest`。`ci` は tag の push では動かさない。
+
+認証は GitHub OIDC（アクセスキーなし）。3 本のロールはどれも `main` ブランチの workflow からしか assume できない。
+
+### 初回セットアップ
+
+1. `gh auth login`（`gh` は mise の管轄外。`brew install gh`）
+2. `just tf-apply platform` → `just tf-apply edge`（OIDC provider とロールを作る。edge は platform が作った OIDC provider を参照するため、**apply 順は platform → edge**）
+   - アカウントに GitHub の OIDC provider が既にある場合は、先に `terraform import aws_iam_openid_connect_provider.github <ARN>` で取り込む（詳細は [`infra/platform/README.md`](infra/platform/README.md)）
+3. `just gh-vars`（ロール ARN・ECR URL・バケット名などを GitHub Actions の Variables に登録する。すべて非秘匿の値で、Secrets は使わない）
+
+### api を ECS に反映する
+
+`app/` はセッション毎に destroy されるため、`deploy-api` は `just up` の後にだけ成功する。
+
+1. ローカルで `TF_VAR_image_tag=<発行済みの 7 桁 SHA> just up`
+2. GitHub の Actions タブ、または `gh workflow run deploy-api.yml -f image_tag=<7 桁 SHA>` で実行する（`image_tag` を省略すると起動した ref の HEAD）。**`deploy-api` は `main` から起動すること**（OIDC ロールの信頼ポリシーが `main` のみ。他の ref では最初のステップで分かるエラーになる）
+
+`app/` が無い状態で実行すると「app 層が apply されていません」で落ちる。`just down` の後の実行も同様。
+
+### 注意
+
+- `terraform` を直接叩くとき、platform / edge は `TF_VAR_github_repository`（`<owner>/<repo>`）が要る。`just` 経由なら justfile が origin の URL から導出して渡す
+- `mise.toml` の `AWS_PROFILE=personal` は外から渡した環境変数を上書きするため、CI では `MISE_ENV=ci`（`mise.ci.toml`）で unset している
+- フィーチャーブランチではイメージは発行されない（main の CI 成功後のみ）
+- ECR は最新 10 イメージだけ保持する。`just up` したセッション中に main へ 10 コミット以上入ると、稼働中のタグが消えて、タスク再起動時に pull に失敗しうる
 
 ## コスト運用
 

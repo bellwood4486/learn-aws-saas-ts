@@ -6,6 +6,11 @@ set shell := ["mise", "exec", "--", "sh", "-c"]
 
 infra_layers := "platform edge network data app"
 
+# GitHub OIDC の信頼ポリシー（sub 条件）に使う "<owner>/<repo>"。
+# origin の URL から導出して Terraform に渡す（ファイルに owner 名を直書きしないため）。
+# 宣言していない層の TF_VAR_* は Terraform に無視されるので、全レシピに export してよい。
+export TF_VAR_github_repository := `git remote get-url origin | sed -E 's#^.*github.com[:/]##; s#\.git$##'`
+
 # ------------------------------------------------------------------
 # session — 層をまたぐ apply / destroy のオーケストレーション
 # ------------------------------------------------------------------
@@ -114,7 +119,7 @@ typecheck:
 # Biome + tf-lint + hadolint + actionlint をまとめて実行する
 [group('check')]
 lint:
-    pnpm exec turbo run lint
+    pnpm exec biome ci .
     just tf-lint
     hadolint Dockerfile
     actionlint
@@ -181,33 +186,47 @@ db-psql:
 # web — apps/web のビルドとedge層への配信
 # ------------------------------------------------------------------
 
-# apps/web をビルドする（.env.local の VITE_* を埋め込む）
+# apps/web をビルドする（.env.local の VITE_* を埋め込む。CI では workflow の env で渡す）。
+# turbo 経由にして、依存する @repo/contracts の dist を先にビルドさせる
 [group('web')]
 web-build:
-    pnpm --filter @repo/web build
+    pnpm exec turbo run build --filter=@repo/web
 
-# ビルド成果物をedge層のS3バケットに同期し、CloudFrontのキャッシュをinvalidateする
+# ビルド成果物をedge層のS3バケットに同期し、CloudFrontのキャッシュをinvalidateする。
+# WEB_BUCKET / CLOUDFRONT_DISTRIBUTION_ID を環境変数で渡すと terraform output を使わない（CI は tfstate に触れないため）
 [group('web')]
 web-deploy: web-build
-    aws s3 sync apps/web/dist "s3://$(cd infra/edge && terraform output -raw web_bucket)" --delete
-    aws cloudfront create-invalidation --distribution-id "$(cd infra/edge && terraform output -raw cloudfront_distribution_id)" --paths '/*'
+    set -eu; \
+    bucket="${WEB_BUCKET:-$(cd infra/edge && terraform output -raw web_bucket)}"; \
+    distribution_id="${CLOUDFRONT_DISTRIBUTION_ID:-$(cd infra/edge && terraform output -raw cloudfront_distribution_id)}"; \
+    aws s3 sync apps/web/dist "s3://$bucket" --delete; \
+    aws cloudfront create-invalidation --distribution-id "$distribution_id" --paths '/*'
 
 # ------------------------------------------------------------------
 # docker — turbo prune → build → ECR push
 # ------------------------------------------------------------------
 
-# turbo prune で剪定したワークスペースから api/worker 共用イメージをビルドする
+# turbo prune で剪定したワークスペースから api/worker 共用イメージをビルドする。
+# ECS タスクが ARM64 なので、ホストのアーキテクチャによらず arm64 イメージを作る
 [group('docker')]
 image-build:
     pnpm exec turbo prune @repo/api @repo/worker --docker
-    docker build -t learn-aws-saas-ts:local .
+    docker build --platform linux/arm64 -t learn-aws-saas-ts:local .
 
-# commit SHA タグで ECR に push する
+# commit SHA（7桁）タグで ECR に発行する。同じタグが既にあれば何もしない（ECR は IMMUTABLE なので再 push は失敗する）。
+# ECR_REPOSITORY_URL を環境変数で渡すと terraform output を使わない（CI は tfstate に触れないため）
 [group('docker')]
 image-push:
-    aws ecr get-login-password | docker login --username AWS --password-stdin "$(cd infra/platform && terraform output -raw ecr_repository_url | cut -d/ -f1)"
-    docker tag learn-aws-saas-ts:local "$(cd infra/platform && terraform output -raw ecr_repository_url):$(git rev-parse --short HEAD)"
-    docker push "$(cd infra/platform && terraform output -raw ecr_repository_url):$(git rev-parse --short HEAD)"
+    set -eu; \
+    repo_url="${ECR_REPOSITORY_URL:-$(cd infra/platform && terraform output -raw ecr_repository_url)}"; \
+    tag="$(git rev-parse --short=7 HEAD)"; \
+    if aws ecr describe-images --repository-name "${repo_url#*/}" --image-ids imageTag="$tag" >/dev/null 2>&1; then \
+        echo "skip: $repo_url:$tag は発行済み"; \
+    else \
+        aws ecr get-login-password | docker login --username AWS --password-stdin "${repo_url%%/*}" && \
+        docker tag learn-aws-saas-ts:local "$repo_url:$tag" && \
+        docker push "$repo_url:$tag"; \
+    fi
 
 # ------------------------------------------------------------------
 # cost — コスト実績と消し残しリソースの検出
@@ -230,3 +249,30 @@ leaks:
     aws elbv2 describe-load-balancers
     aws rds describe-db-instances
     aws secretsmanager list-secrets --include-planned-deletion
+
+# ------------------------------------------------------------------
+# ci — GitHub Actions との連携
+# ------------------------------------------------------------------
+
+# 前提: gh auth login 済み（gh は mise の管轄外。brew で導入する）。
+# CI は tfstate に触れないため、常時起動層（platform / edge）の値を一度ここから渡す。
+# 値はセッションをまたいで変わらないので、ロールやバケットを作り直したときだけ再実行する。
+# どれかの output が取れなければ何も登録しない（先に全値を取得してから登録する）。
+# terraform output の値を GitHub Actions の Variables に登録する
+[group('ci')]
+gh-vars:
+    set -eu; \
+    publish_role="$(cd infra/platform && terraform output -raw github_publish_role_arn)"; \
+    deploy_api_role="$(cd infra/platform && terraform output -raw github_deploy_api_role_arn)"; \
+    ecr_url="$(cd infra/platform && terraform output -raw ecr_repository_url)"; \
+    cognito_client_id="$(cd infra/platform && terraform output -raw cognito_user_pool_client_id)"; \
+    deploy_web_role="$(cd infra/edge && terraform output -raw github_deploy_web_role_arn)"; \
+    web_bucket="$(cd infra/edge && terraform output -raw web_bucket)"; \
+    distribution_id="$(cd infra/edge && terraform output -raw cloudfront_distribution_id)"; \
+    gh variable set AWS_ROLE_ARN_PUBLISH --body "$publish_role"; \
+    gh variable set AWS_ROLE_ARN_DEPLOY_API --body "$deploy_api_role"; \
+    gh variable set ECR_REPOSITORY_URL --body "$ecr_url"; \
+    gh variable set COGNITO_CLIENT_ID --body "$cognito_client_id"; \
+    gh variable set AWS_ROLE_ARN_DEPLOY_WEB --body "$deploy_web_role"; \
+    gh variable set WEB_BUCKET --body "$web_bucket"; \
+    gh variable set CLOUDFRONT_DISTRIBUTION_ID --body "$distribution_id"

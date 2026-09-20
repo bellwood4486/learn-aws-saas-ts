@@ -1,0 +1,9 @@
+# CI 用の mise 設定。MISE_ENV=ci のとき mise.toml に重ねて読まれる。
+#
+# mise.toml の [env] は、外から渡した環境変数を上書きする。
+# AWS_PROFILE=personal のままだと、OIDC で得た認証情報より personal プロファイルが優先され、
+# CI では "The config profile (personal) could not be found" で落ちる
+# （空文字にしても "The config profile () could not be found" で落ちる）。
+# false を指定すると unset になる。
+[env]
+AWS_PROFILE = false

@@ -1,0 +1,92 @@
+name: Deploy api
+
+# 発行済み（publish-image 済み）のイメージを、ECS の api / worker に反映する。手動実行専用。
+# app 層（ALB / ECS）はセッション毎に destroy されるため、ローカルで just up した後にだけ成功する。
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: ECR に発行済みの 7 桁 commit SHA（空なら起動した ref の HEAD）
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  CLUSTER: learn-aws-saas-ts
+  ECR_REPOSITORY_URL: ${{ vars.ECR_REPOSITORY_URL }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # api と worker はイメージを共用するので、両方のサービスを更新する
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, worker]
+    env:
+      SERVICE: learn-aws-saas-ts-${{ matrix.service }}
+    steps:
+      # OIDC ロールの信頼ポリシーが refs/heads/main のみなので、他の ref から起動すると
+      # AssumeRole で分かりにくく失敗する。最初に分かるエラーにする
+      - name: main から実行されていることを確認する
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::deploy-api は main から実行してください（OIDC ロールの信頼ポリシーが main のみのため）: $GITHUB_REF"
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_DEPLOY_API }}
+          aws-region: ap-northeast-1
+
+      - name: 反映するイメージタグを決める
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
+        run: |
+          tag="${INPUT_TAG:-${GITHUB_SHA::7}}"
+          if ! [[ "$tag" =~ ^[0-9a-f]{7}$ ]]; then
+            echo "::error::image_tag は 7 桁の commit SHA を指定してください: $tag"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: イメージが ECR にあることを確認する
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if ! aws ecr describe-images --repository-name "${ECR_REPOSITORY_URL#*/}" --image-ids imageTag="$TAG" > /dev/null 2>&1; then
+            echo "::error::ECR に $TAG がありません。main の publish-image が完了しているか確認してください"
+            exit 1
+          fi
+
+      - name: サービスが ACTIVE であることを確認し、現行のタスク定義を取得する
+        run: |
+          status="$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].status' --output text 2>/dev/null || echo NONE)"
+          if [ "$status" != "ACTIVE" ]; then
+            echo "::error::$SERVICE が ACTIVE ではありません（status=$status）。app 層が apply されていません。先にローカルで just up を実行してください"
+            exit 1
+          fi
+          task_definition_arn="$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].taskDefinition' --output text)"
+          aws ecs describe-task-definition --task-definition "$task_definition_arn" --query taskDefinition > task-definition.json
+
+      # 現行のタスク定義のうち、イメージだけを差し替える（環境変数・ロール・ログ設定はそのまま引き継ぐ）
+      - name: タスク定義のイメージを差し替える
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ matrix.service }}
+          image: ${{ vars.ECR_REPOSITORY_URL }}:${{ steps.tag.outputs.tag }}
+
+      - name: 新リビジョンを登録してサービスを更新する
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.SERVICE }}
+          cluster: ${{ env.CLUSTER }}
+          wait-for-service-stability: true

@@ -22,3 +22,8 @@ output "aws_region" {
   description = "全層で共通のリージョン。"
   value       = var.aws_region
 }
+
+output "github_deploy_web_role_arn" {
+  description = "deploy-web.yml が assume するロールの ARN。`just gh-vars` が GitHub Variables に登録する。"
+  value       = aws_iam_role.github_deploy_web.arn
+}

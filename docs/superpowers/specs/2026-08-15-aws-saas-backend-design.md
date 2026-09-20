@@ -192,8 +192,8 @@ AWS Prescriptive Guidance の標準構成は「1つの root module + `envs/*/ter
 | 層（root module） | 中身 | ライフサイクル | コスト |
 |---|---|---|---|
 | `infra/bootstrap/` | tfstate 用 S3 バケット | 一度だけ。local state を commit | ~$0 |
-| `infra/platform/` | アプリ用 S3, DynamoDB, SQS+DLQ, ECR, アプリ用シークレット, Cognito, GitHub OIDC provider/role | **常時起動** | ~$1/月 |
-| `infra/edge/` | フロント配信用 S3, **CloudFront（2オリジン）** | **常時起動** | ~$0（時間課金なし） |
+| `infra/platform/` | アプリ用 S3, DynamoDB, SQS+DLQ, ECR, アプリ用シークレット, Cognito, GitHub OIDC provider, CI/CD 用ロール（`github_publish` / `github_deploy_api`） | **常時起動** | ~$1/月 |
+| `infra/edge/` | フロント配信用 S3, **CloudFront（2オリジン）**, CI/CD 用ロール（`github_deploy_web`） | **常時起動** | ~$0（時間課金なし） |
 | `infra/network/` | VPC, public/private subnet ×2AZ, IGW, NAT GW, route table, SG | セッション毎 | NAT $0.062/h + EIP $0.005/h |
 | `infra/data/` | RDS PostgreSQL, subnet group, parameter group, DB 認証情報のシークレット, SSM 踏み台用 EC2/IAM ロール | セッション毎・**ステートフル**（RDS のみ。踏み台 EC2 はステートレス） | ~$0.02/h（RDS）+ 踏み台 t4g.nano 分（僅少） |
 | `infra/app/` | ALB, ECS cluster, task definition, service ×2, CloudWatch Logs, IAM task role / task execution role | セッション毎 | ALB $0.024/h + Fargate |
@@ -218,7 +218,7 @@ infra/<layer>/
 
 CloudFront を `app/` 層（セッション毎）に置きたくなるが、**それは2つの理由で破綻する**:
 
-1. **Cognito のコールバック URL がフロントのオリジンと一致している必要がある。** distribution を毎回作り直すと `*.cloudfront.net` のドメインが変わり、常時起動の `platform/` にある Cognito アプリクライアントの callback/logout URL を毎セッション書き換えるはめになる
+1. **Cognito のコールバック URL がフロントのオリジンと一致している必要がある。** distribution を毎回作り直すと `*.cloudfront.net` のドメインが変わり、常時起動の `platform/` にある Cognito アプリクライアントの callback/logout URL を毎セッション書き換えるはめになる（※M6 で認証方式を直接ログイン〔USER_PASSWORD_AUTH〕に決めたため、実際にはコールバック URL を使わない。この理由は M7 実装時点で実質的に消え、理由 2 だけが根拠として残る）
 2. **CloudFront の destroy は遅い。** Terraform は distribution を disable → 伝播待ち → 削除、と進むので `just down` の所要時間を支配する。しかも時間課金がないので消す金銭的な意味がない
 
 **ALB オリジンの扱い（ここが設計の肝）**: ALB の DNS 名はセッション毎に変わる。そこで `edge/` 層に `var.alb_dns_name`（デフォルト空文字）を持たせ、`/api/*` のオリジンとキャッシュビヘイビアを `dynamic` ブロックで包み、**空でないときだけ生成される**ようにする。`just up` は `app/` の apply 後に `edge/` を「その ALB DNS 名を渡して再 apply」する。これは distribution の **更新**（数十秒〜数分）であって作成／削除ではないので速い。
@@ -227,7 +227,7 @@ CloudFront を `app/` 層（セッション毎）に置きたくなるが、**�
 
 **`just down` は `app/` を destroy する前に `edge/` を空の `alb_dns_name` で再 apply する。** そうしないと distribution が死んだ DNS 名を指したまま残り、次のセッションで `edge/` を再 apply するまで `/api/*` が 502 を返す。
 
-**常時起動層どうしの apply 順は `edge/` → `platform/`。** Cognito（`platform/`）のコールバック URL に CloudFront ドメイン（`edge/`）が要るため。逆向きの依存はないので循環はしない。コールバック URL には **`http://localhost:5173` も併記して残す** — M7 で CloudFront を入れた後も M6 のローカル開発フローが動き続けるようにする。
+**常時起動層どうしの apply 順は `platform/` → `edge/`。** 当初は Cognito（`platform/`）のコールバック URL に CloudFront ドメイン（`edge/`）が要るため `edge/` → `platform/` と想定していたが、上記のとおりコールバック URL は使わない。M8 で `edge/` の `github_deploy_web` ロールが `platform/` の GitHub OIDC provider を data source（URL 指定）で参照するため、逆に **`platform/` が先** になる。
 
 ### layer 間の配線
 
@@ -276,7 +276,7 @@ RDS の `manage_master_user_password = true` は近年の定番だが、**この
 1. **Secrets Manager の recovery window** — デフォルトで削除後7日間残り、同名で再作成できない。`recovery_window_in_days = 0` を明示
 2. **Elastic IP の取り残し** — 未アタッチでも $0.005/h = $3.60/月。予算が静かに溶ける最大の経路。`just leaks` で毎回確認する
 3. **RDS のデータは destroy で消える** — 学習用途なので受け入れる。`skip_final_snapshot = true` / `deletion_protection = false` を明示し、スキーマは Drizzle の migration、初期データは seed で毎回流し直す
-4. **ECR は platform 層** — destroy してもイメージを残すため。ただし CI が全コミットでイメージを push するので、**lifecycle policy で「最新10個だけ残す」を必ず入れる**。1イメージ 200〜300MB × $0.10/GB月なので、数十個溜まると $10 予算の無視できない割合になる（衛生の話ではなく予算の話）
+4. **ECR は platform 層** — destroy してもイメージを残すため。ただし `publish-image` が main の全コミットでイメージを push するので、**lifecycle policy で「最新10個だけ残す」を必ず入れる**。1イメージ 200〜300MB × $0.10/GB月なので、数十個溜まると $10 予算の無視できない割合になる（衛生の話ではなく予算の話）
 5. **S3 バケットの `force_destroy`** — 層ごとに扱いを明示（フロント配信用バケットは常時起動層なので destroy しない）
 
 ---
@@ -304,6 +304,7 @@ RDS の `manage_master_user_password = true` は近年の定番だが、**この
 | `db` | `db-generate` / `db-migrate` / `db-seed` / `db-psql` | Drizzle と DB 接続 |
 | `docker` | `image-build` / `image-push` | `turbo prune` → build → ECR push |
 | `cost` | `cost-report` / `leaks` | コスト実績と消し残しリソースの検出 |
+| `ci` | `gh-vars` | `terraform output` の値を GitHub Actions の Variables に登録する（M8） |
 
 `set dotenv-load` は使わない（`.env` を作らない方針）。環境変数は `mise.toml` の `[env]` で与える。
 
@@ -407,32 +408,93 @@ M0 時点では `routes/health.ts` と `server.ts` / `main.ts` のみ実装済�
 | TypeScript / JavaScript | **Biome** | 未使用変数、import順、フォーマット崩れ |
 | Terraform | **TFLint**（`terraform` + `tflint-ruleset-aws`） | AWS プロバイダ固有のベストプラクティス違反（`terraform validate` は構文のみ、TFLint は意味的なチェック） |
 | Dockerfile | **hadolint** | Dockerfile のベストプラクティス違反。内部で shellcheck も走るので `RUN` 内のシェルの問題も拾う |
-| GitHub Actions workflow | **actionlint** | `ci.yml` / `deploy-api.yml` / `deploy-web.yml` の構文・型ミス |
+| GitHub Actions workflow | **actionlint** | `ci.yml` / `publish-image.yml` / `deploy-web.yml` / `deploy-api.yml` の構文・型ミス |
 | シークレット（全体） | **gitleaks** | API キーやパスワードのコミット誤り。pre-commit フックで実行し、コミット自体をブロックする |
 
 **gitleaks は pre-commit 専用、他の4つは pre-commit + CI の両方**で走らせる。理由: シークレットの検出は「そもそもコミットさせない」ことに価値があるので pre-commit の役割。それ以外は pre-commit をスキップした push や PR でも CI が最終防波堤として拾う必要がある。`actionlint` は `.github/workflows/` を編集しないコミットでも毎回走らせる意味が薄いので pre-commit には含めず **CI 専用**にした。
 
-justfile の `check` グループにある `lint` レシピが4種類（Biome / TFLint / hadolint / actionlint）を束ね、`tf` グループの `tf-lint` を内部で呼ぶ。CI (`ci.yml`) はこの `just lint` 一発で全部回す。
+justfile の `check` グループにある `lint` レシピが4種類（Biome / TFLint / hadolint / actionlint）を束ね、`tf` グループの `tf-lint` を内部で呼ぶ。CI (`ci.yml`) は lint についてはこの `just lint` 一発で全部回す。Biome は turbo 経由ではなくルートで `biome ci .` を直接呼ぶ（各パッケージに `lint` スクリプトが無く、`turbo run lint` は 0 タスクで終わって Biome が走らないため）。
 
 M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tflint --recursive` clean）。hadolint / actionlint / gitleaks は対象ファイル（Dockerfile / workflow）がまだ無いため、mise でのインストールと `.pre-commit-config.yaml` への配線のみ完了。
 
 ---
 
-## CI/CD — CI と CD を明確に分ける
+## CI/CD — 責務を分け、依存するインフラのライフサイクルに揃える
 
 一般的なチュートリアルをそのまま真似すると壊れる。「push したら ECS にデプロイ」は **ECS サービスが常時存在する前提**で書かれているが、この構成では `app/` 層はセッション後に destroy 済み。何もない状態に `update-service` すると毎回失敗する。
 
-| | トリガー | やること | 依存する層 |
-|---|---|---|---|
-| **CI** (`ci.yml`) | 全 push / PR | `turbo run typecheck test`、`terraform fmt -check` / `validate`、`just lint`（Biome + TFLint + hadolint + actionlint）、`turbo prune` → Docker ビルド → **commit SHA タグ**で ECR push | `platform/` のみ（常時存在するので必ず通る） |
-| **CD** (`deploy-api.yml`) | `workflow_dispatch`（手動）| タスク定義を登録して ECS サービスを更新 | `app/` が apply 済みのときだけ |
-| **フロント配信** (`deploy-web.yml`) | main への push | `apps/web` をビルド → S3 に同期 → CloudFront invalidate | `edge/` のみ（常時存在するので自動でよい） |
+そこで CI（検証）と CD（成果物の発行・反映）を別の workflow に分け、CD はさらに「何に依存するか」で分ける。**CI/CD の粒度がインフラのライフサイクルに従う**のが、この構成ならではの学び。
 
-フロントだけ自動デプロイにできるのは、`edge/` が常時起動層だから。**CI/CD の粒度がインフラのライフサイクルに従う**という、この構成ならではの学びがある。
+| workflow | 責務 | トリガー | AWS | 依存する層 | assume するロール |
+|---|---|---|---|---|---|
+| `ci.yml` | **検証のみ**。`just typecheck` / `test` / `lint`（Biome + TFLint + hadolint + actionlint）、`terraform fmt -check` / `validate`、`docker build`（push しない） | 全ブランチの `push`（**tag は除く**: `branches: ['**']`） | **触らない**（認証情報なし。`permissions: contents: read`） | なし | なし |
+| `publish-image.yml` | `turbo prune` → Docker ビルド → **commit SHA タグ**で ECR に発行 | main の CI 成功後（`workflow_run`） | ECR | `platform/`（常時） | `github_publish` |
+| `deploy-web.yml` | `apps/web` をビルド → S3 に同期 → CloudFront invalidate | main の CI 成功後（`workflow_run`） | S3 / CloudFront | `edge/`（常時） | `github_deploy_web` |
+| `deploy-api.yml` | 発行済みイメージを ECS の api / worker に反映 | `workflow_dispatch`（手動） | ECS | `app/`（セッション毎） | `github_deploy_api` |
 
-- 認証は **GitHub OIDC → IAM ロールを assume**。アクセスキーは GitHub Secrets に置かない（`aws-actions/configure-aws-credentials`、`permissions: id-token: write`）
-- OIDC provider とロールは `platform/` 層。信頼ポリシーの `sub` 条件でリポジトリとブランチを絞る
-- **イメージタグに `latest` を使わない**。commit SHA でタグ付けし、どの SHA が動いているか特定できる／ロールバックできる状態にする
+**ランナー**: `ci.yml` と `publish-image.yml` は `ubuntu-24.04-arm`、`deploy-web.yml` と `deploy-api.yml` は `ubuntu-latest`。ECS タスクが ARM64（`infra/app/ecs.tf`）なので、CI の `docker build` も発行も arm ランナーで行う（x86 ランナーで発行すると amd64 イメージになり、Fargate で `exec format error` になる）。public リポジトリは arm ランナーが無料。private にする場合は QEMU + buildx（遅い）か、タスク定義を X86_64 に変えて対処する。deploy-web / deploy-api はアーキテクチャに依存しない。
+
+### 責務の境界
+
+- **CI は AWS に一切触らない。** 認証情報が要らないので、どのブランチでもいつでも走らせられる。CI が緑であることが CD の起点になる
+- **CD は main の CI 成功後にだけ動く。** `workflow_run`（`branches: [main]`、`conclusion == success` を確認）で連鎖させ、`actions/checkout` には `workflow_run.head_sha` を渡す。`workflow_run` は default ブランチの workflow 定義で動くので、main 以外の未レビューのコードが権限付きで走ることはない
+- **`ci.yml` は tag の push では動かさない**（`on.push.branches: ['**']`）。tag の push では `workflow_run.head_branch` が tag 名になるため、`main` という名前の tag を未レビューの commit に push されると、CI が通った後に `workflow_run` の `branches: [main]` をすり抜けて OIDC ロールに到達できてしまう。多層防御として、`publish-image` / `deploy-web` のジョブには `workflow_run.event == 'push'` と `workflow_run.head_repository.full_name == github.repository`（push で起動した、このリポジトリ自身の CI だけ）の `if:` も付ける
+- **「イメージの発行」と「ECS への反映」は別の関心事。** `publish-image` は `platform/`（常時存在）だけに依存するので自動でよい。`deploy-api` は「発行済みの SHA を選んで反映する」だけなので、ロールバックも同じ操作になる
+- **`deploy-web` を自動にできるのは `edge/` が常時起動層だから。** `workflow_run` には `paths` フィルタがなく、main の CI が通るたびに走る。同期は差分だけ、invalidate は `/*` の 1 パスなので実害は小さく、冪等
+- **トレードオフ**: フィーチャーブランチではイメージが作られない（未マージのブランチを ECS に載せて試すことはできない）。ECR の lifecycle（最新 10 個）が main のイメージだけを数えるので、こちらは利点でもある
+
+### publish-image
+
+- **イメージタグに `latest` を使わない。** commit SHA（`git rev-parse --short=7 HEAD`）でタグ付けし、どの SHA が動いているか特定できる／ロールバックできる状態にする。`--short` の桁数は shallow clone とローカルで揺れうるので、**`=7` で固定**し、ローカルの `just image-push` も同じ式に揃える
+- イメージは `docker build --platform linux/arm64`（`just image-build`）で作る。ECS タスクが ARM64 なので、ホストのアーキテクチャによらず arm64 にそろえる。発行は arm ランナー（`ubuntu-24.04-arm`）でネイティブにビルドする
+- ECR は `IMMUTABLE` なので、同じ SHA を再 push すると落ちる。push 前に `aws ecr describe-images` で既存タグを確認し、あればスキップする（冪等）
+- 二度ビルド（CI の `docker build` と publish）になるのは許容する。CI の役割は「壊れた変更を main に入れない」こと
+
+### deploy-api
+
+- 入力は `image_tag`（省略時は起動した ref の HEAD の 7 桁 SHA）
+- 最初のステップで **main から起動されていること**を確認する。OIDC ロールの信頼ポリシーが `refs/heads/main` のみなので、他の ref から起動すると AssumeRole で分かりにくく失敗する。それを「main から実行してください」と分かるエラーにする
+- 最初に **ECR にそのタグが存在するか**と **ECS サービスが ACTIVE か**を確認し、`app/` が無ければ「`just up` が先」と分かるメッセージで落とす
+- **api と worker はイメージを共用するので両方を更新する**（`strategy.matrix` で並列）。各サービスで `aws ecs describe-task-definition`（現行定義を取得）→ `aws-actions/amazon-ecs-render-task-definition`（イメージだけ差し替え）→ `aws-actions/amazon-ecs-deploy-task-definition`（`wait-for-service-stability: true`）
+- タスク定義は Terraform が所有しているため、新リビジョンを登録すると state とずれる。`infra/app/ecs.tf` の両 `aws_ecs_service` に **`lifecycle { ignore_changes = [task_definition] }`** を足す。`just up` は `image_tag` を明示して apply するので影響しない
+
+### 認証（GitHub OIDC）
+
+アクセスキーは GitHub Secrets に置かない（`aws-actions/configure-aws-credentials`、`permissions: id-token: write`）。**ロールは workflow ごとに 3 本に分け、置く層は各リソースのライフサイクルに合わせる。**
+
+| リソース | 置く層 | 理由 |
+|---|---|---|
+| GitHub OIDC provider | `platform/` | アカウントに 1 つだけ作れる共有物。作成前に `aws iam list-open-id-connect-providers` で既存を確認する |
+| `github_publish` | `platform/` | ECR push だけで、対象の ECR が `platform/` にある |
+| `github_deploy_api` | `platform/` | `app/` は毎回 destroy されるので、ロールは常時起動層に置く必要がある |
+| `github_deploy_web` | `edge/` | 権限の対象（S3 と CloudFront）が `edge/` にある。provider は `data.aws_iam_openid_connect_provider`（URL 指定）で引き、`terraform_remote_state` は増やさない |
+
+**3 ロールとも信頼ポリシーの `sub` は `repo:<owner>/<repo>:ref:refs/heads/main` のみ。** CI が AWS に触らないので、全ブランチに広げる必要がない。
+
+| ロール | 権限 |
+|---|---|
+| `github_publish` | ECR の push 系（`GetAuthorizationToken` は `*`、それ以外は対象リポジトリの ARN）と `DescribeImages` |
+| `github_deploy_web` | 対象バケットへの `s3:PutObject` / `DeleteObject` / `ListBucket`、対象 distribution への `cloudfront:CreateInvalidation` |
+| `github_deploy_api` | `ecr:DescribeImages`、`ecs:DescribeTaskDefinition` / `RegisterTaskDefinition`（リソース指定不可のため `*`）、`ecs:UpdateService` / `DescribeServices`（クラスタ `learn-aws-saas-ts` のサービス `learn-aws-saas-ts-api` / `learn-aws-saas-ts-worker` を明示）、`iam:PassRole`（`role/learn-aws-saas-ts-ecs-execution` / `-api-task` / `-worker-task` を明示し、`iam:PassedToService = ecs-tasks.amazonaws.com` の条件を付ける。IAM ポリシーは存在しないロールの ARN も書けるので、app 層が destroy 済みでも問題ない。ワイルドカードにすると `github_*` ロール自身にもマッチしてしまう。ロール名を変えるときは `infra/platform/iam.tf` も合わせる） |
+
+### 値の受け渡し
+
+CI は tfstate に触れない。各層の値は **GitHub Actions の Variables**（非秘匿）に一度登録する。対象はどれも常時起動層（`platform/` / `edge/`）の値で、セッションをまたいで変わらない。`just gh-vars` が `terraform output` から `gh variable set` で登録する（`gh` は mise の管轄外で、README に前提として記載する）。先に 7 値をすべて取得してから登録するので、どれかの output が取れなければ何も登録しない（空の値を登録しない）。
+
+| Variable | 用途 |
+|---|---|
+| `AWS_ROLE_ARN_PUBLISH` / `AWS_ROLE_ARN_DEPLOY_WEB` / `AWS_ROLE_ARN_DEPLOY_API` | 各 workflow が assume するロール |
+| `ECR_REPOSITORY_URL` | publish / deploy-api のイメージ参照 |
+| `WEB_BUCKET` / `CLOUDFRONT_DISTRIBUTION_ID` | deploy-web の同期先と invalidate 対象 |
+| `COGNITO_CLIENT_ID` | deploy-web の Vite ビルド（`VITE_COGNITO_CLIENT_ID`）。M6 で保留した「自動デプロイでの配線」の答え |
+
+ローカルと CI で同じコマンドを読めるよう、CI も `just image-push` / `just web-deploy` を呼ぶ。両レシピは `ECR_REPOSITORY_URL` / `WEB_BUCKET` / `CLOUDFRONT_DISTRIBUTION_ID` を環境変数で上書きでき、未指定なら従来どおり `terraform output` を使う。
+
+### CI 上の `AWS_PROFILE`
+
+`mise.toml` の `[env]`（`AWS_PROFILE = "personal"`）は**外から渡した値を上書きする**。`justfile` は `mise exec --` 経由で走るので、CI で OIDC の認証情報を入れても、レシピの中では `personal` に戻され、`The config profile (personal) could not be found` で落ちる（空文字にしても `profile () could not be found` で落ちる）。
+
+対処: **`mise.ci.toml`** に `[env] AWS_PROFILE = false`（unset）を置き、workflow の `env` に `MISE_ENV: ci` を設定する。`MISE_ENV` を付けなければ従来どおり `personal` のままで、ローカルには影響しない（`mise 2026.9.11` で確認済み）。
 
 ---
 
@@ -513,7 +575,7 @@ M0 時点で Biome / TFLint は実装・検証済み（`biome check` clean、`tf
 - ✅ Cognito App Client は自己サインアップ無効（`admin_create_user_config.allow_admin_create_user_only = true`）。Hosted UI / OAuth コールバックURLはM6でフロントのログイン方式が決まってから追加する
 - ✅ 実機検証: ALBのDNS名への `curl -X POST /api/items` がJWTなしで401、`aws cognito-idp admin-initiate-auth`（`ADMIN_USER_PASSWORD_AUTH`）で取得したJWTありで201を返すことを確認した。`GET /api/items/:id` も同様にJWTなしで401・ありで200
 
-**M6: フロントエンド（ローカルのみ）**
+**M6: フロントエンド（ローカルのみ） — 完了**
 - `apps/web` を Vite + React で実装、`@repo/contracts` 経由で API を呼ぶ
 - Vite dev server の proxy で `/api` を **ローカル起動の `apps/api`** に転送してフルスタックで動作確認
 - Cognito ログインを組み込む（localhost は HTTPS 不要）
@@ -558,15 +620,23 @@ apps/web/
 - **テストはVitest + Testing Library（jsdom）**。`LoginForm` / `ItemList` / `CreateItemForm` を最低限カバーする。Cognito呼び出しとfetchはモックし、ユニットテストは実AWS・実Cognitoに一切繋がない（プロジェクト方針を踏襲）
 - **エラーハンドリング**: ログインエラー（`NotAuthorizedException`等）はフォーム内にメッセージ表示。API側の401はログアウト、それ以外のエラーは一覧/フォームにエラーメッセージを表示するのみで、リトライ機構は作り込まない
 
-**M7: edge 層 — S3 + CloudFront で本番配信**
-- フロント用 S3（非公開）+ CloudFront + OAC
-- 2オリジン構成（default → S3、`/api/*` → ALB）と、SPA 用の `custom_error_response`
-- Cognito のコールバック URL を CloudFront ドメインに設定
-- `just up` に「`app/` の後に `edge/` を ALB DNS 付きで再 apply」を組み込む
+**M7: edge 層 — S3 + CloudFront で本番配信 — 完了**
+- ✅ フロント用 S3（非公開）+ CloudFront + OAC
+- ✅ 2オリジン構成（default → S3、`/api/*` → ALB）と、SPA 用の `custom_error_response`
+- ✅ `just up` に「`app/` の後に `edge/` を ALB DNS 付きで再 apply」を組み込む。`just web-deploy` でフロントを配信
+- ➖ Cognito のコールバック URL の設定は**不要になった**（M6 で直接ログインに決めたためコールバック URL 自体を使わない。実装計画 `2026-09-17-m7-edge-layer.md` の Self-Review 参照）
+- 実機検証の結果は `infra/edge/README.md` に記録済み
 
-**M8: CI/CD**
-- `ci.yml`（全 push）/ `deploy-api.yml`（手動）/ `deploy-web.yml`（main への push）
-- GitHub OIDC でアクセスキーなしの assume role
+**M8: CI/CD — 責務を分けた 4 workflow**
+
+設計の詳細は「CI/CD」節。ここでは作業項目だけを挙げる。
+
+- `infra/platform/` に GitHub OIDC provider と `github_publish` / `github_deploy_api` ロール、`infra/edge/` に `github_deploy_web` ロール（provider は data source で参照）。ロール ARN を outputs に出す
+- `infra/app/ecs.tf` の両 `aws_ecs_service` に `ignore_changes = [task_definition]`
+- `mise.ci.toml`（`AWS_PROFILE` の unset）
+- `justfile`: `image-push` / `web-deploy` を環境変数で上書き可能にし、タグを `git rev-parse --short=7 HEAD` に統一、`gh-vars` を新設
+- `.github/workflows/` に `ci.yml` / `publish-image.yml` / `deploy-web.yml` / `deploy-api.yml`（`ci` / `publish-image` は ECS が ARM64 なので `ubuntu-24.04-arm`、`ci` は tag の push では動かさない）
+- README に Variables の一覧と初回セットアップ（`gh auth login` → `just gh-vars`）を追記
 
 **（オプション）M9: NAT を VPC エンドポイントに置き換えて比較**
 - Gateway 型(S3/DynamoDB)は無料、Interface 型は各 ~$7-8/月。コストと構成の違いを実測する
@@ -590,7 +660,8 @@ apps/web/
 | `apps/web/` | Vite + React SPA |
 | `Dockerfile` | `turbo prune` 前提。api / worker 共用 |
 | `.pre-commit-config.yaml` | Biome / TFLint / hadolint / gitleaks |
-| `.github/workflows/{ci,deploy-api,deploy-web}.yml` | CI / CD。CI 側で actionlint も実行 |
+| `.github/workflows/{ci,publish-image,deploy-web,deploy-api}.yml` | CI（検証）と CD（発行・反映）。CI 側で actionlint も実行 |
+| `mise.ci.toml` | CI 用の mise 設定。`AWS_PROFILE` を unset して OIDC 認証を通す（`MISE_ENV=ci`） |
 | `README.md` | セットアップ手順とコスト運用の注意 |
 
 ---
@@ -607,7 +678,11 @@ apps/web/
 - **M5** — JWT なしで 401、Cognito 発行の JWT ありで 201（`aws cognito-idp admin-initiate-auth` でトークン取得）
 - **M6** — `just dev-all`（ローカル api + Vite）でブラウザから作成・一覧ができ、ログイン／ログアウトが動く
 - **M7** — CloudFront の URL をブラウザで開いて SPA が表示され、同一オリジンの `/api/items` が**Authorization ヘッダ付きで**叩けて（＝401 にならない）、リロードしても SPA ルーティングが 404 にならない
-- **M8** — `app/` を destroy した状態で push しても CI が緑になり、commit SHA タグのイメージが ECR に増える。`just up` 後に deploy-api を手動実行するとタスク定義リビジョンが上がる
+- **M8** — 課金セッションを 1 回にまとめて確認する
+  1. `platform/` → `edge/` を apply（OIDC provider と 3 ロール）し、`just gh-vars` で Variables を登録する
+  2. `app/` が無い状態で main にマージし、CI が緑になる → `publish-image` が走って ECR に SHA タグが増える → `deploy-web` が走って CloudFront 経由で反映される
+  3. `just up`（`image_tag` は発行済みの SHA A）の後、別の SHA B を main に発行し、`deploy-api` を手動実行する。タスク定義のリビジョンが上がり、api / worker の両サービスが安定し、`/healthz` が応答する
+  4. `just down` の後に `just leaks` で消し残しがゼロ
 
 **コスト検証（毎セッション必須）**: `just down` の後に `just leaks` と `just cost-report` を実行し、NAT / EIP / ALB / RDS / 削除待ちシークレットがゼロであることを確認する。
 

@@ -17,6 +17,6 @@ variable "app_port" {
 }
 
 variable "image_tag" {
-  description = "ECR に push した api/worker 共用イメージのタグ（commit SHA）。ECR は IMMUTABLE のため latest 固定にはできない。`just image-push` が出力するタグを渡す。デフォルト無し（apply/destroyともに明示指定が必要）。"
+  description = "ECR に発行した api/worker 共用イメージのタグ（7桁の commit SHA。`git rev-parse --short=7 HEAD`）。ECR は IMMUTABLE のため latest 固定にはできない。main の publish-image、またはローカルの `just image-push` が発行する。デフォルト無し（apply/destroyともに明示指定が必要）。"
   type        = string
 }
