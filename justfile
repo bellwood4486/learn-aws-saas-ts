@@ -248,3 +248,21 @@ leaks:
     aws elbv2 describe-load-balancers
     aws rds describe-db-instances
     aws secretsmanager list-secrets --include-planned-deletion
+
+# ------------------------------------------------------------------
+# ci — GitHub Actions との連携
+# ------------------------------------------------------------------
+
+# terraform output の値を GitHub Actions の Variables に登録する。
+# CI は tfstate に触れないため、常時起動層（platform / edge）の値を一度ここから渡す。
+# 値はセッションをまたいで変わらないので、ロールやバケットを作り直したときだけ再実行する。
+# 前提: gh auth login 済み（gh は mise の管轄外。brew で導入する）
+[group('ci')]
+gh-vars:
+    gh variable set AWS_ROLE_ARN_PUBLISH --body "$(cd infra/platform && terraform output -raw github_publish_role_arn)"
+    gh variable set AWS_ROLE_ARN_DEPLOY_API --body "$(cd infra/platform && terraform output -raw github_deploy_api_role_arn)"
+    gh variable set ECR_REPOSITORY_URL --body "$(cd infra/platform && terraform output -raw ecr_repository_url)"
+    gh variable set COGNITO_CLIENT_ID --body "$(cd infra/platform && terraform output -raw cognito_user_pool_client_id)"
+    gh variable set AWS_ROLE_ARN_DEPLOY_WEB --body "$(cd infra/edge && terraform output -raw github_deploy_web_role_arn)"
+    gh variable set WEB_BUCKET --body "$(cd infra/edge && terraform output -raw web_bucket)"
+    gh variable set CLOUDFRONT_DISTRIBUTION_ID --body "$(cd infra/edge && terraform output -raw cloudfront_distribution_id)"
