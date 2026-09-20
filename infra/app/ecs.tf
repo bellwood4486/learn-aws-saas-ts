@@ -64,6 +64,12 @@ resource "aws_ecs_service" "api" {
     container_port   = var.app_port
   }
 
+  # deploy-api.yml が新リビジョンを登録して task_definition を差し替えるため、Terraform の state とのずれを無視する。
+  # 新規作成（just up）では image_tag 付きのタスク定義が使われるので影響しない。
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
   depends_on = [aws_lb_listener.http]
 }
 
@@ -118,5 +124,10 @@ resource "aws_ecs_service" "worker" {
     subnets          = data.terraform_remote_state.network.outputs.private_subnet_ids
     security_groups  = [data.terraform_remote_state.network.outputs.ecs_security_group_id]
     assign_public_ip = false
+  }
+
+  # deploy-api.yml が新リビジョンを登録して task_definition を差し替えるため、Terraform の state とのずれを無視する。
+  lifecycle {
+    ignore_changes = [task_definition]
   }
 }
