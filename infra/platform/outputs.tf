@@ -57,3 +57,13 @@ output "cognito_user_pool_client_id" {
   description = "Cognito App Client の ID。api の JWT 検証（aud）、動作確認用トークン取得で使う。"
   value       = aws_cognito_user_pool_client.web.id
 }
+
+output "github_publish_role_arn" {
+  description = "publish-image.yml が assume するロールの ARN。`just gh-vars` が GitHub Variables に登録する。"
+  value       = aws_iam_role.github_publish.arn
+}
+
+output "github_deploy_api_role_arn" {
+  description = "deploy-api.yml が assume するロールの ARN。`just gh-vars` が GitHub Variables に登録する。"
+  value       = aws_iam_role.github_deploy_api.arn
+}
