@@ -6,6 +6,7 @@
 
 - `infra/bootstrap/`（tfstateバケット）
 - `infra/app/`（ALBのDNS名。`var.alb_dns_name`として明示的に渡す。`terraform_remote_state`は使わない）
+- `infra/platform/`（GitHub OIDC provider。`github_deploy_web` ロールの信頼ポリシーが data source で参照する。**apply 順は `platform/` → `edge/`**）
 
 ## `var.alb_dns_name` について
 
@@ -17,6 +18,10 @@ app層が未apply、またはdestroy済みのときはこの変数を空文字�
   distributionが死んだALBを指したまま残らないようにする
 - 単独で `just tf-apply edge` する場合、ALBのDNS名を渡したいときは
   `TF_VAR_alb_dns_name="$(cd infra/app && terraform output -raw alb_dns_name)" just tf-apply edge` のように実行する
+
+## CI/CD 用ロール
+
+`github_deploy_web` は deploy-web.yml が OIDC で assume するロール。権限はこの層のバケットへの `s3:ListBucket` / `PutObject` / `DeleteObject` と、この distribution への `cloudfront:CreateInvalidation` だけ。信頼ポリシーの `sub` は `repo:<owner>/<repo>:ref:refs/heads/main` のみ（`<owner>/<repo>` は `var.github_repository`。justfile が `TF_VAR_github_repository` で渡す）。ARN は output `github_deploy_web_role_arn`。
 
 ## CloudFrontのdestroyについて
 

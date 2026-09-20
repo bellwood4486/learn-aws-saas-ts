@@ -15,3 +15,8 @@ variable "alb_dns_name" {
   type        = string
   default     = ""
 }
+
+variable "github_repository" {
+  description = "CI/CD 用ロールの信頼ポリシー（sub 条件）に使う GitHub リポジトリ（<owner>/<repo>）。デフォルト無し。justfile が origin の URL から TF_VAR_github_repository として導出して渡すので、terraform を直接叩くときは同じ環境変数を渡す。"
+  type        = string
+}
