@@ -6,11 +6,6 @@ set shell := ["mise", "exec", "--", "sh", "-c"]
 
 infra_layers := "platform edge network data app"
 
-# GitHub OIDC の信頼ポリシー（sub 条件）に使う "<owner>/<repo>"。
-# origin の URL から導出して Terraform に渡す（ファイルに owner 名を直書きしないため）。
-# 宣言していない層の TF_VAR_* は Terraform に無視されるので、全レシピに export してよい。
-export TF_VAR_github_repository := `git remote get-url origin | sed -E 's#^.*github.com[:/]##; s#\.git$##'`
-
 # ------------------------------------------------------------------
 # session — 層をまたぐ apply / destroy のオーケストレーション
 # ------------------------------------------------------------------
@@ -276,3 +271,11 @@ gh-vars:
     gh variable set AWS_ROLE_ARN_DEPLOY_WEB --body "$deploy_web_role"; \
     gh variable set WEB_BUCKET --body "$web_bucket"; \
     gh variable set CLOUDFRONT_DISTRIBUTION_ID --body "$distribution_id"
+
+# 前提: gh auth login 済みで、リポジトリの管理者権限がある。
+# 出力を git 管理外の .mise.local.toml に TF_VAR_github_subject_prefix として設定する（README の初回セットアップ参照）。
+# 毎回の just 起動で API を叩かないよう、値は一度取得して .mise.local.toml に置く。
+# GitHub の OIDC の sub クレームの接頭辞（repo:<owner>@<owner_id>/<repo>@<repo_id>）を表示する
+[group('ci')]
+gh-subject-prefix:
+    gh api "repos/$(gh repo view --json nameWithOwner --jq .nameWithOwner)/actions/oidc/customization/sub" --jq .sub_claim_prefix
