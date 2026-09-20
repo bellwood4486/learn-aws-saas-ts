@@ -1,0 +1,48 @@
+name: Deploy web
+
+# apps/web をビルドして edge 層の S3 に同期し、CloudFront のキャッシュを invalidate する。
+# edge 層は常時起動なので自動でよい。workflow_run には paths フィルタが無く、main の CI が通るたびに走る
+# （同期は差分だけ、invalidate は /* の 1 パスなので冪等で実害は小さい）。
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  MISE_ENV: ci
+
+# 古い実行が新しい実行より後に終わって古いビルドで上書きしないよう、直列にする
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: jdx/mise-action@v4
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_DEPLOY_WEB }}
+          aws-region: ap-northeast-1
+
+      # web-build → S3 sync → CloudFront invalidate。VITE_* はビルド時に埋め込まれる
+      - run: just web-deploy
+        env:
+          VITE_COGNITO_CLIENT_ID: ${{ vars.COGNITO_CLIENT_ID }}
+          VITE_AWS_REGION: ap-northeast-1
+          WEB_BUCKET: ${{ vars.WEB_BUCKET }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}

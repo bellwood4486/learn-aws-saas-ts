@@ -1,0 +1,42 @@
+name: Publish image
+
+# api / worker 共用イメージを、commit SHA タグで ECR に発行する。
+# main の CI が成功したときだけ動く。ECS への反映は deploy-api.yml（手動）の役割で、ここでは行わない。
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  MISE_ENV: ci
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      # workflow_run は default ブランチの HEAD で動くので、CI が検証した commit を明示して checkout する
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: jdx/mise-action@v4
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_PUBLISH }}
+          aws-region: ap-northeast-1
+
+      - run: just image-build
+
+      # 同じタグが ECR にあれば何もしない（IMMUTABLE なので再実行しても落ちない）
+      - run: just image-push
+        env:
+          ECR_REPOSITORY_URL: ${{ vars.ECR_REPOSITORY_URL }}
