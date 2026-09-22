@@ -1,0 +1,3388 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terraform 本番構成を読み解く</title>
+<meta name="description" content="learn-aws-saas-ts の infra/ を題材に、AWS SaaS バックエンドの定番構成を Terraform のコードから学ぶインタラクティブ教科書。">
+<style>
+:root{
+  color-scheme: light;
+  --bg:#faf8f3; --surface:#ffffff; --surface-2:#f3efe6; --text:#1f2328; --muted:#5b616b; --line:#e1dbcc;
+  --accent:#2f5bd8; --on-accent:#ffffff; --accent-soft:#e6ecfc;
+  --ok:#1a7f37; --ok-soft:#e3f4e8; --bad:#c62828; --bad-soft:#fbe7e7; --warn:#9a5b00; --warn-soft:#fdf0d8;
+  --c-bootstrap:#6b7280; --c-platform:#2563eb; --c-edge:#0d9488; --c-network:#c26a00; --c-data:#7c3aed; --c-app:#d0246e;
+  --life-always:#1a7f37; --life-session:#c26a00; --life-once:#6b7280;
+  --code-bg:#f3efe6; --tok-com:#6a6a5e; --tok-str:#1a7f37; --tok-kw:#7a3fc4; --tok-num:#a34f00; --tok-ref:#0b6e8a; --tok-int:#c2185b;
+  --note-bg:rgba(47,91,216,.075); --note-hover:rgba(47,91,216,.15); --note-active:rgba(47,91,216,.24);
+  --shadow:0 6px 24px rgba(30,25,10,.12);
+  --font-sans:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Noto Sans JP",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-serif:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP","Source Han Serif JP",Georgia,serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#14161a; --surface:#1b1e23; --surface-2:#20242a; --text:#e6e8eb; --muted:#9aa1ab; --line:#30353c;
+    --accent:#7ea2ff; --on-accent:#0b1020; --accent-soft:#1f2a47;
+    --ok:#5fd07f; --ok-soft:#163021; --bad:#ff8a8a; --bad-soft:#3a1e1e; --warn:#f0b04a; --warn-soft:#3a2d12;
+    --c-bootstrap:#9ca3af; --c-platform:#6ea0ff; --c-edge:#3cc7b7; --c-network:#f0a548; --c-data:#b394ff; --c-app:#f27eb0;
+    --life-always:#5fd07f; --life-session:#f0a548; --life-once:#9ca3af;
+    --code-bg:#1b1e23; --tok-com:#8b949e; --tok-str:#7ee787; --tok-kw:#d2a8ff; --tok-num:#ffa657; --tok-ref:#79c0ff; --tok-int:#ff9bd0;
+    --note-bg:rgba(126,162,255,.09); --note-hover:rgba(126,162,255,.17); --note-active:rgba(126,162,255,.28);
+    --shadow:0 6px 24px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#14161a; --surface:#1b1e23; --surface-2:#20242a; --text:#e6e8eb; --muted:#9aa1ab; --line:#30353c;
+  --accent:#7ea2ff; --on-accent:#0b1020; --accent-soft:#1f2a47;
+  --ok:#5fd07f; --ok-soft:#163021; --bad:#ff8a8a; --bad-soft:#3a1e1e; --warn:#f0b04a; --warn-soft:#3a2d12;
+  --c-bootstrap:#9ca3af; --c-platform:#6ea0ff; --c-edge:#3cc7b7; --c-network:#f0a548; --c-data:#b394ff; --c-app:#f27eb0;
+  --life-always:#5fd07f; --life-session:#f0a548; --life-once:#9ca3af;
+  --code-bg:#1b1e23; --tok-com:#8b949e; --tok-str:#7ee787; --tok-kw:#d2a8ff; --tok-num:#ffa657; --tok-ref:#79c0ff; --tok-int:#ff9bd0;
+  --note-bg:rgba(126,162,255,.09); --note-hover:rgba(126,162,255,.17); --note-active:rgba(126,162,255,.28);
+  --shadow:0 6px 24px rgba(0,0,0,.5);
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{animation:none!important;transition:none!important}}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:16px;line-height:1.85;-webkit-text-size-adjust:100%}
+a{color:var(--accent)}
+code,kbd{font-family:var(--font-mono);font-size:.88em}
+p code,li code,td code,.callout code,.explain code,.opt code,.dg-panel code,.np-body code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:.05em .38em;word-break:break-word}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2.5px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* ---------- shell ---------- */
+.shell{display:grid;grid-template-columns:292px minmax(0,1fr);min-height:100vh}
+.side{position:sticky;top:0;height:100vh;overflow:auto;padding:30px 20px 24px 22px;border-right:1px solid var(--line);background:var(--surface-2);display:flex;flex-direction:column;gap:18px}
+.brand h1{font-family:var(--font-serif);font-size:21px;line-height:1.45;margin:0 0 6px;letter-spacing:.01em}
+.brand p{margin:0;font-size:12.5px;line-height:1.7;color:var(--muted)}
+.brand .src{font-family:var(--font-mono);font-size:11.5px}
+.overall{font-size:12.5px;color:var(--muted)}
+.bar{height:6px;border-radius:99px;background:var(--line);overflow:hidden;margin:6px 0 4px}
+.bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.toc{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.toc a{display:grid;grid-template-columns:24px 1fr auto;align-items:baseline;gap:8px;padding:8px 10px;border-radius:9px;text-decoration:none;color:var(--text);font-size:14px;line-height:1.5;border:1.5px solid transparent}
+.toc a:hover{background:var(--surface)}
+.toc a[aria-current="page"]{background:var(--surface);border-color:var(--line);font-weight:700;box-shadow:inset 3px 0 0 var(--nc,var(--accent))}
+.toc .n{font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.toc .st{font-size:11.5px;color:var(--muted);font-family:var(--font-mono);white-space:nowrap}
+.toc .st.done{color:var(--ok);font-weight:700}
+.side-foot{margin-top:auto;display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1.5px solid var(--line);background:var(--surface);border-radius:9px;padding:6px 12px;font-size:13px;cursor:pointer;line-height:1.5}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:700}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.topbar{display:none}
+.scrim{display:none}
+
+main{padding:44px clamp(20px,4.5vw,64px) 90px;min-width:0}
+.page{max-width:900px;margin:0 auto}
+.chapter[hidden]{display:none}
+
+/* ---------- typography ---------- */
+.ch-head{margin-bottom:34px}
+.eyebrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px;font-size:12.5px;color:var(--muted);font-family:var(--font-mono);letter-spacing:.05em}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:1px 11px;border-radius:99px;border:1.5px solid var(--nc,var(--line));background:var(--surface);color:var(--text);font-family:var(--font-mono);font-size:12px;letter-spacing:0}
+.chip::before{content:"";width:.6em;height:.6em;border-radius:50%;background:var(--nc,var(--muted))}
+.life{display:inline-flex;align-items:center;gap:5px;padding:1px 10px;border-radius:99px;border:1.5px solid var(--lc);font-family:var(--font-sans);font-size:12px;color:var(--text);background:var(--surface)}
+.life.always{--lc:var(--life-always)}.life.always::before{content:"●";color:var(--life-always)}
+.life.session{--lc:var(--life-session)}.life.session::before{content:"◔";color:var(--life-session)}
+.life.once{--lc:var(--life-once)}.life.once::before{content:"◇";color:var(--life-once)}
+.l-bootstrap{--nc:var(--c-bootstrap)}.l-platform{--nc:var(--c-platform)}.l-edge{--nc:var(--c-edge)}
+.l-network{--nc:var(--c-network)}.l-data{--nc:var(--c-data)}.l-app{--nc:var(--c-app)}
+h2{font-family:var(--font-serif);font-size:clamp(27px,4.2vw,40px);line-height:1.35;margin:.1em 0 .45em;letter-spacing:.01em}
+h3{font-family:var(--font-serif);font-size:23px;line-height:1.45;margin:2.3em 0 .5em;padding-top:.2em}
+h3::before{content:"";display:inline-block;width:.42em;height:.42em;margin-right:.55em;vertical-align:.12em;background:var(--nc,var(--accent));border-radius:2px;transform:rotate(45deg)}
+h4{font-size:16px;margin:1.6em 0 .3em}
+.lead{font-size:17.5px;line-height:1.95;color:var(--text)}
+.goals{margin:20px 0 0;padding:14px 20px;border:1px solid var(--line);border-left:4px solid var(--nc,var(--accent));border-radius:10px;background:var(--surface)}
+.goals h4{margin:0 0 4px;font-size:13.5px;color:var(--muted);letter-spacing:.04em}
+.goals ul{margin:0;padding-left:1.3em}
+.goals li{margin:2px 0}
+p,li{overflow-wrap:anywhere}
+ul,ol{padding-left:1.35em}
+li{margin:.25em 0}
+.tbl-wrap{overflow-x:auto;margin:1.2em 0}
+table.tbl{border-collapse:collapse;width:100%;font-size:14.5px;line-height:1.65;background:var(--surface);border:1px solid var(--line)}
+.tbl th,.tbl td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+.tbl th{background:var(--surface-2);font-weight:700;white-space:nowrap}
+.callout{margin:1.5em 0;padding:14px 18px 14px 18px;border-radius:12px;border:1px solid var(--line);border-left:5px solid var(--cc,var(--accent));background:var(--surface)}
+.callout>.ct{display:block;font-size:12.5px;font-weight:700;letter-spacing:.05em;color:var(--muted);margin-bottom:4px}
+.callout p{margin:.4em 0}
+.callout.why{--cc:var(--accent)}
+.callout.warn{--cc:var(--warn);background:var(--warn-soft)}
+.callout.try{--cc:var(--ok)}
+.callout.warn>.ct{color:var(--warn)}
+.callout.try>.ct{color:var(--ok)}
+.callout pre{margin:.6em 0 0;padding:10px 14px;border-radius:8px;background:var(--code-bg);border:1px solid var(--line);overflow-x:auto;font:13.5px/1.7 var(--font-mono)}
+.flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;margin:1.2em 0;padding:0;list-style:none}
+.flow li{margin:0;padding:8px 12px;border:1.5px solid var(--nc,var(--line));border-radius:10px;background:var(--surface);font-size:14px;line-height:1.55;flex:1 1 130px}
+.flow li b{display:block;font-size:12px;color:var(--muted);font-weight:700}
+.flow li.arrow{flex:0 0 auto;border:none;background:none;padding:8px 0;align-self:center;color:var(--muted)}
+
+/* ---------- code reader ---------- */
+.code{margin:1.5em 0;border:1px solid var(--line);border-radius:12px;background:var(--code-bg)}
+.code>figcaption{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;padding:9px 14px;border-bottom:1px solid var(--line);border-radius:11px 11px 0 0;background:var(--surface);font:12.5px var(--font-mono);color:var(--muted)}
+.code>figcaption .file{color:var(--text);font-weight:700}
+.code>figcaption .hint{margin-left:auto;font-family:var(--font-sans);font-size:12px}
+.code-scroll{overflow-x:auto;padding:8px 0}
+table.lines{border-collapse:collapse;width:100%;font:13.5px/1.75 var(--font-mono)}
+.lines td{padding:0;vertical-align:top}
+.lines .num{width:3em;min-width:3em;text-align:right;padding-right:10px;color:var(--muted);user-select:none;font-size:12px}
+.lines .mark{width:2.1em;min-width:2.1em;text-align:center;user-select:none}
+.lines .src{padding-right:18px;white-space:pre;color:var(--text)}
+.lines tr.has-note{cursor:pointer;background:var(--note-bg)}
+.lines tr.has-note:hover{background:var(--note-hover)}
+.lines tr.has-note td.num{box-shadow:inset 3px 0 0 var(--accent)}
+.lines tr.note-first td{border-top:1px dashed var(--line)}
+.lines tr.active{background:var(--note-active)!important}
+.lines tr:focus-visible{outline-offset:-2px}
+.badge{display:inline-flex;align-items:center;justify-content:center;width:1.45em;height:1.45em;border-radius:50%;background:var(--accent);color:var(--on-accent);font:700 11px/1 var(--font-sans);margin-top:.25em}
+.tok-com{color:var(--tok-com);font-style:italic}
+.tok-str{color:var(--tok-str)}
+.tok-kw{color:var(--tok-kw);font-weight:700}
+.tok-num{color:var(--tok-num)}
+.tok-ref{color:var(--tok-ref)}
+.tok-int{color:var(--tok-int)}
+.tok-attr{color:var(--text);font-weight:600}
+.note-panel{margin:0;padding:12px 16px 14px;border-top:2px solid var(--accent);border-radius:0 0 11px 11px;background:var(--surface);font-family:var(--font-sans)}
+.np-hint{margin:0;font-size:14px;color:var(--muted)}
+.np-head{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-bottom:6px}
+.np-head .np-title{font-size:15.5px}
+.np-head .np-range{font:12px var(--font-mono);color:var(--muted)}
+.np-btns{margin-left:auto;display:flex;gap:6px}
+.np-btns .btn{padding:2px 10px}
+.np-body p{margin:.55em 0 0;font-size:14.5px;line-height:1.8}
+.np-body p::before{display:block;font-size:11.5px;font-weight:700;letter-spacing:.05em;color:var(--muted);margin-bottom:1px}
+.np-body .what::before{content:"何をしている？"}
+.np-body .why::before{content:"なぜこう書く？"}
+.np-body .if::before{content:"外す・間違えると？"}
+.np-body .tip::before{content:"補足"}
+
+/* ---------- quiz ---------- */
+.quiz{margin:1.7em 0;padding:18px 20px 16px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+.quiz .qhead{display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.05em}
+.qbadge{background:var(--accent);color:var(--on-accent);padding:1px 10px;border-radius:99px;letter-spacing:.04em}
+.quiz .q{margin:.2em 0 .6em;font-weight:600;line-height:1.75}
+.quiz .q pre{margin:.6em 0;padding:10px 14px;border-radius:8px;background:var(--code-bg);border:1px solid var(--line);overflow-x:auto;font:13.5px/1.7 var(--font-mono);font-weight:400}
+.opt{display:flex;gap:10px;align-items:baseline;width:100%;text-align:left;padding:10px 14px;margin:8px 0;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);cursor:pointer;line-height:1.7}
+.opt:hover:not(:disabled){border-color:var(--accent)}
+.opt:disabled{cursor:default}
+.opt .mk{flex:0 0 auto;font-family:var(--font-mono);font-size:12px;color:var(--muted);min-width:5.2em}
+.opt.correct{border-color:var(--ok);background:var(--ok-soft)}
+.opt.correct .mk{color:var(--ok);font-weight:700}
+.opt.wrong{border-color:var(--bad);background:var(--bad-soft)}
+.opt.wrong .mk{color:var(--bad);font-weight:700}
+.explain{margin-top:12px;padding:12px 16px;border-radius:10px;background:var(--surface-2);border-left:4px solid var(--accent);font-size:15px;line-height:1.85}
+.explain p{margin:.3em 0}
+.explain .verdict{display:block;font-weight:700;margin-bottom:2px}
+.explain.ok .verdict{color:var(--ok)}
+.explain.ng .verdict{color:var(--bad)}
+.qretry{margin-top:10px}
+
+/* ---------- diagram ---------- */
+.diagram{margin:1.6em 0;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+.dg-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+.dg-bar .sp{flex:1}
+.dg-tab{border:1.5px solid var(--line);background:var(--bg);border-radius:99px;padding:4px 14px;font-size:13.5px;cursor:pointer}
+.dg-tab:hover{border-color:var(--accent)}
+.dg-tab[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:700}
+.dg-legend{display:flex;flex-wrap:wrap;gap:6px 14px;padding:9px 14px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted)}
+.dg-legend span{display:inline-flex;gap:6px;align-items:center}
+.dg-legend i{display:inline-block;width:.85em;height:.85em;border-radius:3px;border:2px solid var(--nc);background:transparent}
+.dg-legend i.dash{border-style:dashed}
+.dg-stage{overflow-x:auto}
+.dg-stage svg{display:block;width:100%;min-width:800px;height:auto}
+.dg-panel{padding:14px 18px 16px;border-top:1px solid var(--line);font-size:15px}
+.dg-panel h4{margin:0 0 4px;font-size:16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.dg-panel p{margin:.35em 0}
+.dg-panel .kv{font-size:13.5px;color:var(--muted)}
+.dg-panel .kv b{color:var(--text)}
+.step-nav{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+.step-count{font:12.5px var(--font-mono);color:var(--muted)}
+.step-dots{display:flex;gap:5px;flex-wrap:wrap}
+.step-dots button{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line);background:var(--bg);font:11px var(--font-mono);cursor:pointer;padding:0}
+.step-dots button[aria-current="step"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:700}
+.step-dots button.seen{border-color:var(--accent)}
+/* svg parts */
+svg text{font-family:var(--font-sans)}
+.vpc{fill:none;stroke:var(--muted);stroke-width:1.5;stroke-dasharray:6 5}
+.band{fill:var(--surface-2);stroke:var(--line)}
+.band-label{font-size:11.5px;fill:var(--muted)}
+.n{cursor:pointer;transition:opacity .2s}
+.n .frame{fill:var(--surface);stroke:var(--nc,var(--muted));stroke-width:1.6}
+.n .tint{fill:var(--nc,var(--muted));fill-opacity:.13}
+.n.session .frame,.n.session .tint{stroke-dasharray:5 3}
+.n.session .tint{stroke:none}
+.n .lbl{font-size:14px;font-weight:700;fill:var(--text);text-anchor:middle}
+.n .sub{font-size:10.5px;fill:var(--muted);text-anchor:middle}
+.n:hover .frame{stroke-width:2.6}
+.n.sel .frame{stroke-width:3.4}
+.n:focus-visible .frame{stroke-width:3.4;stroke:var(--accent)}
+.n.bootstrap{--nc:var(--c-bootstrap)}
+.n.platform{--nc:var(--c-platform)}
+.n.edge{--nc:var(--c-edge)}
+.n.network{--nc:var(--c-network)}
+.n.data{--nc:var(--c-data)}
+.n.app{--nc:var(--c-app)}
+.mode-life .n.life-always{--nc:var(--life-always)}
+.mode-life .n.life-session{--nc:var(--life-session)}
+.mode-life .n.life-once{--nc:var(--life-once)}
+.mode-life .n.none{--nc:var(--muted)}
+.tracing .n{opacity:.25}
+.tracing .n.on{opacity:1}
+.tracing .n.on .frame{stroke-width:3.2}
+.tracing .dag-edge{opacity:.1}
+.browser-hint{opacity:.55}
+.browser-hint .edge{opacity:1;stroke:var(--muted);stroke-dasharray:4 4}
+.tracing .browser-hint .edge.on{stroke:var(--accent);stroke-dasharray:7 5;animation:flow .9s linear infinite;opacity:1}
+.tracing .browser-hint .edge.past{stroke:var(--accent);opacity:.32}
+.edge{fill:none;stroke:var(--accent);stroke-width:2.6;opacity:0;stroke-linejoin:round;pointer-events:none}
+.edge.past{opacity:.32}
+.edge.on{opacity:1;stroke-dasharray:7 5;animation:flow .9s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-24}}
+.arrowhead{fill:var(--accent)}
+.dag-edge{fill:none;stroke:var(--muted);stroke-width:2;stroke-linejoin:round;transition:opacity .2s,stroke .2s}
+.dag-edge.dashed{stroke-dasharray:8 5}
+.dag-edge.dotted{stroke-dasharray:2 5;stroke-linecap:round}
+.dag-edge.hi{stroke:var(--accent);stroke-width:3.2}
+.dag-edge.lo{opacity:.18}
+.dag .n.lo{opacity:.35}
+
+/* ---------- chapter footer ---------- */
+.ch-foot{margin-top:56px;padding-top:24px;border-top:2px solid var(--line)}
+.score{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin-bottom:16px;font-size:14.5px}
+.score strong{font-family:var(--font-mono)}
+.pager{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;margin-top:14px}
+.pager a{display:inline-block;text-decoration:none;padding:9px 16px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);font-size:14.5px;line-height:1.5}
+.pager a:hover{border-color:var(--accent)}
+.pager a small{display:block;color:var(--muted);font-size:11.5px}
+.pager a.next{margin-left:auto;text-align:right}
+.srcnote{margin-top:40px;font-size:12.5px;color:var(--muted);line-height:1.7}
+
+/* ---------- responsive ---------- */
+@media (max-width:920px){
+  .shell{display:block}
+  .topbar{display:flex;position:sticky;top:0;z-index:20;align-items:center;gap:10px;height:52px;padding:0 14px;background:var(--surface);border-bottom:1px solid var(--line)}
+  .topbar strong{font-family:var(--font-serif);font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .side{position:fixed;left:0;top:0;bottom:0;width:min(320px,86vw);z-index:40;transform:translateX(-102%);transition:transform .22s;box-shadow:var(--shadow)}
+  body.nav-open .side{transform:none}
+  body.nav-open .scrim{display:block;position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.4)}
+  main{padding-top:26px}
+  .code>figcaption .hint{display:none}
+}
+@media print{
+  .side,.topbar,.ch-foot .pager,.step-nav,.dg-bar{display:none!important}
+  .chapter[hidden]{display:block!important}
+  .shell{display:block}
+  .note-panel{position:static}
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <button class="btn" id="menuBtn" aria-label="目次を開く" aria-expanded="false" aria-controls="side">☰ 目次</button>
+  <strong id="topTitle">Terraform 本番構成を読み解く</strong>
+</div>
+<div class="scrim" id="scrim"></div>
+<div class="shell">
+  <aside class="side" id="side" aria-label="目次">
+    <div class="brand">
+      <h1>Terraform 本番構成を読み解く</h1>
+      <p>AWS SaaS バックエンドの定番構成を、実際の <code>infra/</code> のコードから学ぶ。</p>
+      <p class="src">元コミット 19f8140 時点のコード</p>
+    </div>
+    <div class="overall" id="overall">
+      <div>読了 <b id="ovRead">0</b>/<span id="ovTotal">8</span> 章 ・ クイズ正解 <b id="ovQuiz">0</b>/<span id="ovQTotal">0</span></div>
+      <div class="bar"><i id="ovBar"></i></div>
+    </div>
+    <nav aria-label="章一覧"><ol class="toc" id="toc"></ol></nav>
+    <div class="side-foot">
+      <button class="btn" id="themeBtn" type="button">テーマ: 自動</button>
+      <button class="btn" id="resetBtn" type="button">進捗をリセット</button>
+    </div>
+  </aside>
+  <main id="main" tabindex="-1">
+  <div class="page">
+<section class="chapter" id="ch0" data-num="0" data-title="全体像：なぜ 6 層に分けるのか" data-short="全体像" hidden>
+  <header class="ch-head">
+    <p class="eyebrow"><span>CHAPTER 0</span><span class="chip">infra/ 全体</span></p>
+    <h2>全体像：なぜ 6 層に分けるのか</h2>
+    <p class="lead"><code>infra/</code> には Terraform の「root module」が 6 つ並んでいます。AWS のサービス別ではなく、<b>コストとライフサイクル</b>で切った 6 つです。この教科書は、その切り方の理由と、各層のコードに込められた判断を順に読み解きます。まずは全体の地図から。</p>
+    <div class="goals">
+      <h4>この章で読み解くこと</h4>
+      <ul>
+        <li>「月 $10」という制約が、Terraform の分割方針をどう決めたか</li>
+        <li>6 つの層それぞれの役割・ライフサイクル・コスト</li>
+        <li><code>POST /api/items</code> 1 本が、どのリソースをどう通るか</li>
+      </ul>
+    </div>
+  </header>
+
+  <h3>設計を支配する制約：月 $10</h3>
+  <p>教科書どおりの「本番構成」を素直に立てて常時起動しておくと、AWS の月額はこうなります。学習価値のほとんどない「配管」だけで予算を大きく超えてしまいます。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>常時起動した場合</th><th>月額目安</th></tr></thead>
+    <tbody>
+      <tr><td>NAT Gateway ×1</td><td>約 $35〜40</td></tr>
+      <tr><td>ALB</td><td>約 $18〜22</td></tr>
+      <tr><td>RDS <code>db.t4g.micro</code></td><td>約 $12〜15</td></tr>
+      <tr><td>Fargate 0.25vCPU / 0.5GB ×2</td><td>約 $20〜30</td></tr>
+      <tr><td>DynamoDB / SQS / S3 / ECR / Secrets Manager / Cognito / CloudFront</td><td>約 $2（ほぼゼロ）</td></tr>
+    </tbody>
+  </table></div>
+  <p>高いのは NAT・ALB・RDS・Fargate の 4 つで、しかも「使っていない時間」に課金され続けます。一方、最終行のサービス群は放置してもほとんど課金されません。この<b>性質の違い</b>が、分割の軸になります。</p>
+
+  <div class="callout why">
+    <span class="ct">設計判断</span>
+    <p>Terraform を「サービス別」ではなく「<b>ライフサイクル別</b>」に分け、高コストな層は<b>触るときだけ apply して、終わったら destroy</b> する。どの層が高コストか、どの層がステートフルかを意識して境界を切ること自体が、この構成の学習成果になっています。</p>
+  </div>
+
+  <h3>6 つの層</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>層</th><th>中身</th><th>ライフサイクル</th><th>コスト</th></tr></thead>
+    <tbody>
+      <tr><td><span class="chip l-bootstrap">bootstrap</span></td><td>tfstate 用 S3 バケット</td><td><span class="life once">一度だけ</span></td><td>約 $0</td></tr>
+      <tr><td><span class="chip l-platform">platform</span></td><td>アプリ用 S3・DynamoDB・SQS+DLQ・ECR・Secrets・Cognito・GitHub OIDC と CI/CD ロール</td><td><span class="life always">常時起動</span></td><td>約 $1/月</td></tr>
+      <tr><td><span class="chip l-edge">edge</span></td><td>フロント用 S3・CloudFront（2 オリジン）・deploy-web ロール</td><td><span class="life always">常時起動</span></td><td>約 $0（時間課金なし）</td></tr>
+      <tr><td><span class="chip l-network">network</span></td><td>VPC・subnet ×2AZ・IGW・NAT・route table・SG</td><td><span class="life session">セッション毎</span></td><td>NAT $0.062/h + EIP $0.005/h</td></tr>
+      <tr><td><span class="chip l-data">data</span></td><td>RDS・DB 認証情報のシークレット・SSM 踏み台</td><td><span class="life session">セッション毎</span>（唯一のステートフル）</td><td>RDS 約 $0.02/h</td></tr>
+      <tr><td><span class="chip l-app">app</span></td><td>ALB・ECS クラスタ・タスク定義・サービス ×2・Logs・IAM ロール</td><td><span class="life session">セッション毎</span></td><td>ALB $0.024/h + Fargate</td></tr>
+    </tbody>
+  </table></div>
+  <p>常時起動の 2 層（platform / edge）は月 $2 前後。セッション毎の 3 層（network / data / app）は 1 セッション（4 時間）で約 $0.6。月 10 回使っても $8 前後に収まる計算です。</p>
+
+  <h3>クリックで辿る全体図</h3>
+  <p>下の図は、6 層のリソースを 1 枚に重ねたものです。<b>色が層</b>、<b>実線 / 破線がライフサイクル</b>（実線＝常時起動、破線＝セッション毎）を表します。3 つのモードを切り替えて眺めてください。</p>
+  <ul>
+    <li><b>構成を見る</b>：リソースをクリックすると、役割・置かれている層・コード上の場所が出ます</li>
+    <li><b>ライフサイクル</b>：常時起動と、セッション毎に作り直すものを色分けします</li>
+    <li><b>リクエストをたどる</b>：<code>POST /api/items</code> が通る経路を 1 ステップずつ追います</li>
+  </ul>
+  <div class="diagram" id="archDiagram" aria-label="アーキテクチャ図"></div>
+
+  <div class="callout why">
+    <span class="ct">設計判断</span>
+    <p><b>CloudFront を 2 オリジンにするのが要。</b>既定のパスは S3（SPA）、<code>/api/*</code> は ALB に流します。独自ドメインが無くても <code>*.cloudfront.net</code> の証明書で HTTPS になり、次の 3 つが同時に片付きます。</p>
+    <ol>
+      <li><b>mixed content</b>：HTTPS のページから HTTP の ALB は呼べない。CloudFront が HTTPS を終端し、CloudFront → ALB は HTTP でよい</li>
+      <li><b>CORS</b>：フロントと API が同一オリジンに見えるので、CORS 設定が要らない</li>
+      <li><b>Cognito</b>：localhost 以外では HTTPS が必要になる</li>
+    </ol>
+  </div>
+
+  <h3>この教科書の読み方</h3>
+  <p>各章は「その層が解く問題 → 実コードの読解 → 設計判断 → クイズ」の順です。コードの<b>色付きの行や番号バッジをクリック</b>すると、その行の「何をしている？／なぜこう書く？／外す・間違えると？」が出ます。クイズは選択式で、答えるとすぐ解説が出ます。章は依存順（apply する順）に並んでいるので、上から読むのがおすすめです。</p>
+  <div class="callout try">
+    <span class="ct">やってみよう（課金なし）</span>
+    <p>手元で、各層が単独で <code>plan</code> できることを確かめてみましょう。<code>plan</code> は何も作らないので課金は発生しません（AWS の認証は済んでいる前提）。</p>
+    <pre>just tf-plan platform</pre>
+  </div>
+
+  <h3>確認クイズ</h3>
+
+  <div class="quiz" data-id="ch0-q1" data-kind="選択">
+    <div class="q">Terraform の root module を 6 つに分けた、最大の理由はどれでしょう？</div>
+    <ol hidden>
+      <li data-correct>高コストな層だけを「触るときだけ apply、終わったら destroy」できるよう、コストとライフサイクルで境界を切るため</li>
+      <li>AWS のサービスごとに root module を分けるのが Terraform の公式推奨だから</li>
+      <li>dev / stg / prod の 3 環境を、それぞれ別の root module で管理するため</li>
+      <li>tfstate が大きくなると <code>apply</code> が極端に遅くなるのを避けるため</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>この構成の環境は <code>dev</code> 単一なので、環境別の分割ではありません。分割の軸は「コスト」と「ライフサイクル」です。NAT・ALB・RDS・Fargate だけを毎回作って消し、S3 や DynamoDB のような安いものは常時起動のままにする。これを 1 つの root module でやろうとすると、<code>-target</code> だらけになってしまいます。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch0-q2" data-kind="予測">
+    <div class="q">セッション終了時に <code>just down</code> で層を destroy すると、「データが失われる」のはどの層でしょう？</div>
+    <ol hidden>
+      <li data-correct><span class="chip l-data">data</span>（RDS が消える）</li>
+      <li><span class="chip l-network">network</span>（VPC・NAT が消える）</li>
+      <li><span class="chip l-app">app</span>（ALB・ECS が消える）</li>
+      <li><span class="chip l-edge">edge</span>（フロントの S3・CloudFront が消える）</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>ステートフルなのは data 層の RDS だけです（踏み台 EC2 はステートレス）。学習用途なので「消えるのを受け入れる」代わりに、スキーマは Drizzle の migration（<code>just db-migrate</code>）、初期データは seed で毎回流し直します。なお edge は常時起動層なので <code>just down</code> では destroy されません（再 apply されるだけです。詳しくは第 6 章）。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch0-q3" data-kind="選択">
+    <div class="q">CloudFront を、セッション毎の app 層ではなく常時起動の edge 層に置いています。<b>現在のコードで今も成り立っている</b>根拠はどれでしょう？</div>
+    <ol hidden>
+      <li data-correct>distribution の destroy は「disable → 伝播待ち → 削除」と遅く、しかも時間課金がないので、消す金銭的な意味がないから</li>
+      <li>CloudFront は時間課金が高く、常時起動のほうが割安になるから</li>
+      <li>distribution を作り直すたびに <code>*.cloudfront.net</code> のドメインが変わり、Cognito のコールバック URL を毎回書き換える必要があるから</li>
+      <li>CloudFront は VPC の外にあるので、app 層（VPC 内）とは同じ root module に置けないから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>3 番目は<b>当初の設計理由</b>でしたが、実装で認証方式を「直接ログイン（<code>USER_PASSWORD_AUTH</code>）」にしたため、コールバック URL 自体を使わなくなり、根拠として消えました。今も残っているのは 1 番目です。設計の理由は実装とともに変わりうる、という好例です。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch0-q4" data-kind="選択">
+    <div class="q">CloudFront を 2 オリジンにして「同一オリジン」に見せると、いくつかの問題が片付きます。<b>これでは解決しない</b>ものはどれでしょう？</div>
+    <ol hidden>
+      <li>HTTPS のページから HTTP の ALB を呼べない（mixed content）</li>
+      <li>ブラウザからの API 呼び出しに CORS 設定が要る</li>
+      <li>Cognito が localhost 以外で HTTPS を要求する</li>
+      <li data-correct>ALB の DNS 名がセッション毎に変わる</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>ALB は app 層で毎回作り直されるので、DNS 名は毎回変わります。2 オリジン構成でも、CloudFront の <code>/api/*</code> の向き先（オリジン）は誰かが更新しなければなりません。これを Terraform の <code>dynamic</code> ブロックと「再 apply」で解いているのが第 6 章のハイライトです。</p>
+    </div>
+  </div>
+</section>
+<section class="chapter" id="ch1" data-num="1" data-title="bootstrap：state を置く場所を先に作る" data-short="bootstrap" data-layer="bootstrap" hidden>
+  <header class="ch-head">
+    <p class="eyebrow"><span>CHAPTER 1</span><span class="chip l-bootstrap">bootstrap</span><span class="life once">一度だけ apply</span></p>
+    <h2>bootstrap：state を置く場所を先に作る</h2>
+    <p class="lead">Terraform は「今どのリソースを管理しているか」を tfstate というファイルに記録します。この構成では、<b>全 6 層の tfstate を 1 つの S3 バケット</b>に置きます。そのバケットを作るのが bootstrap 層で、すべての層の出発点です。</p>
+    <div class="goals">
+      <h4>この章で読み解くこと</h4>
+      <ul>
+        <li>「state の置き場所を、state で管理できない」というニワトリと卵の問題の解き方</li>
+        <li>S3 backend の設定（<code>key</code> / <code>use_lockfile</code>）と、バケット名を <code>-backend-config</code> で渡す理由</li>
+        <li>state バケットに付ける 4 つの守り（versioning・暗号化・公開ブロック・<code>prevent_destroy</code>）</li>
+      </ul>
+    </div>
+  </header>
+
+  <h3>ニワトリと卵の問題</h3>
+  <p>S3 backend を使うには、先にバケットが存在していなければなりません。でもそのバケットを Terraform で作るなら、その state はどこに置くのか。答えは「<b>この層だけ local state（手元のファイル）を使い、そのファイルをリポジトリに commit する</b>」です。</p>
+  <ol class="flow">
+    <li class="l-bootstrap"><b>① bootstrap</b>local state で apply → バケットができる</li>
+    <li class="arrow">→</li>
+    <li class="l-platform"><b>② 他の 5 層</b>そのバケットを S3 backend として使う</li>
+  </ol>
+  <p>bootstrap の tfstate には S3 バケット関連のリソース情報しか入りません（DB パスワードのような秘匿値を持たない層なので、commit しても許容できます）。</p>
+
+  <h3>コードを読む①：state バケット本体</h3>
+  <figure class="code" data-file="infra/bootstrap/main.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">data "aws_caller_identity" "current" {}
+
+# 全層の tfstate を保管するバケット。この層だけ local state で管理する
+# （このバケット自身を backend として使うことはできないため）。
+resource "aws_s3_bucket" "tfstate" {
+  bucket = "${var.project_name}-tfstate-${data.aws_caller_identity.current.account_id}"
+
+  # 全 tfstate が入るバケットなので誤 destroy を防ぐ。
+  # 本当に作り直したい場合はこの lifecycle ブロックを一時的に外す。
+  lifecycle {
+    prevent_destroy = true
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="1-1" data-title="アカウント ID を data source で取る">
+        <p class="what"><code>data "aws_caller_identity"</code> は「今の認証情報が属する AWS アカウント」の情報を読むだけの data source です。リソースは作りません。</p>
+        <p class="why">アカウント ID をファイルに直書きしないため。この構成のルールで、どの層も同じ方法でアカウント ID を得ます。</p>
+      </div>
+      <div class="note" data-lines="3-4" data-title="この層だけ local state">
+        <p class="what">コメントが、ニワトリと卵の答えを書いています。<code>providers.tf</code> にも <code>backend</code> ブロックは無く、state は手元の <code>terraform.tfstate</code> になります。</p>
+        <p class="tip">他の 5 層の <code>providers.tf</code> には <code>backend "s3"</code> があります（この後のコードで読みます）。</p>
+      </div>
+      <div class="note" data-lines="6-6" data-title="バケット名にアカウント ID を入れる">
+        <p class="what">バケット名は <code>learn-aws-saas-ts-tfstate-&lt;アカウントID&gt;</code> になります。</p>
+        <p class="why">S3 のバケット名は<b>全世界で一意</b>です。アカウント ID を足せば、他人と名前がぶつかりません。この規則は data 層など、他層のコードにも登場します。</p>
+      </div>
+      <div class="note" data-lines="8-12" data-title="prevent_destroy = true">
+        <p class="what"><code>lifecycle { prevent_destroy = true }</code> を付けると、このリソースを destroy する計画は<b>エラーで止まります</b>。</p>
+        <p class="why">全 tfstate が入るバケットなので、誤操作で消えると 6 層すべての管理情報を失います。</p>
+        <p class="if">本当に作り直すときは、このブロックを一時的に外してから destroy します。コメントもそう書いています。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む②：バケットに付ける守り</h3>
+  <p>S3 バケットの設定は、AWS provider v4 以降、<b>バケット本体とは別のリソース</b>に分かれています。「1 バケット = 5 リソース」は、この provider の作りに由来する書き方です。</p>
+  <figure class="code" data-file="infra/bootstrap/main.tf" data-first="15" data-lang="hcl">
+<script type="text/plain">resource "aws_s3_bucket_versioning" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="15-21" data-title="バージョニング">
+        <p class="what">オブジェクトを上書き・削除しても、古い版を残します。</p>
+        <p class="why">tfstate は Terraform が壊れると一番困るファイルです。壊れたり誤って上書きされたりしたとき、過去の版から戻せるようにしています。</p>
+      </div>
+      <div class="note" data-lines="23-32" data-title="サーバ側暗号化（SSE-S3）">
+        <p class="what">保存時に AES256 で暗号化します。<code>bucket_key_enabled</code> は本来 SSE-KMS で KMS へのリクエスト数を減らす設定で、AES256 では実質的な効果はありません。</p>
+        <p class="why">tfstate には、リソースの属性が平文で入ります。data 層の DB パスワードも、この state バケットの中に平文で入ります（第 4 章）。だから暗号化と非公開は必須です。</p>
+      </div>
+      <div class="note" data-lines="34-41" data-title="パブリックアクセスをすべて遮断">
+        <p class="what">公開 ACL・公開ポリシーの設定を拒否し、既存の公開設定も無視する、4 つのフラグをすべて有効にします。</p>
+        <p class="why">設定ミスがあっても、state が世界に公開される事故は起きません。多層防御です。</p>
+      </div>
+      <div class="note" data-lines="43-49" data-title="ACL を無効化（BucketOwnerEnforced）">
+        <p class="what">オブジェクトの所有者を常にバケット所有者にし、ACL を使えなくします。</p>
+        <p class="why">今の AWS の推奨設定です。アクセス制御を IAM とバケットポリシーに一本化できます。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む③：他の層は、どうやってこのバケットを使う？</h3>
+  <p>例として platform 層の <code>providers.tf</code> を読みます。他の層（network / data / app / edge）も、<code>key</code> と <code>Layer</code> タグ以外は同じ形です。</p>
+  <figure class="code" data-file="infra/platform/providers.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">terraform {
+  backend "s3" {
+    key          = "platform/terraform.tfstate"
+    region       = "ap-northeast-1"
+    use_lockfile = true
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+
+  default_tags {
+    tags = {
+      Project   = "learn-aws-saas-ts"
+      ManagedBy = "terraform"
+      Layer     = "platform"
+    }
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="2-2" data-title="bucket が書かれていない">
+        <p class="what"><code>backend "s3"</code> なのに <code>bucket</code> 属性がありません。これは <b>partial configuration</b> で、足りない設定は <code>terraform init -backend-config=...</code> で渡します。</p>
+        <p class="why">backend ブロックでは変数や data source が使えません。バケット名はアカウント ID を含むので、コードに書くとアカウント ID の直書きになってしまいます。次のコードで、渡し方を見ます。</p>
+      </div>
+      <div class="note" data-lines="3-3" data-title="key は層ごとに変える">
+        <p class="what">同じバケットの中で、層ごとに別のキー（<code>platform/terraform.tfstate</code> など）に state を置きます。</p>
+        <p class="why">state は層ごとに別ファイルなので、「platform を plan しても network には触れない」という分離が守られます。tfstate が 6 つになる、ということです。</p>
+      </div>
+      <div class="note" data-lines="5-5" data-title="use_lockfile = true">
+        <p class="what">S3 のネイティブなロック機能を使います。apply の間だけバケットにロックファイルを置き、同時に実行されるのを防ぎます。</p>
+        <p class="why">従来の DynamoDB ロックテーブル（<code>dynamodb_table</code>）は deprecated で、将来削除されます。だから、この構成ではロック用のテーブルを作りません。</p>
+        <p class="if">2 人（や 2 つのターミナル）が同時に apply すると、後から来たほうは <code>Error acquiring the state lock</code> で止まり、state の破損を防げます。</p>
+      </div>
+      <div class="note" data-lines="12-18" data-title="default_tags で全リソースに共通タグ">
+        <p class="what"><code>Project</code> / <code>ManagedBy</code> / <code>Layer</code> の 3 タグを、この層のすべてのリソースに自動で付けます。</p>
+        <p class="why">コンソールのリソース一覧などで「どの層が作ったものか」を見分けられます。タグの付け忘れも起きません。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h4>バケット名はどう渡される？</h4>
+  <p>渡しているのは <code>justfile</code> のレシピです。bootstrap の output からバケット名を取り出して <code>-backend-config</code> に渡します。</p>
+  <figure class="code" data-file="justfile" data-first="47" data-lang="just">
+<script type="text/plain"># 指定した層で terraform plan を実行する（例: just tf-plan platform）
+[group('tf')]
+tf-plan layer:
+    cd infra/{{layer}} && terraform init -input=false -backend-config="bucket=$(cd ../bootstrap && terraform output -raw tfstate_bucket)" && terraform plan</script>
+    <div class="notes">
+      <div class="note" data-lines="50-50" data-title="バケット名を bootstrap の output から取る">
+        <p class="what">まず対象の層（<code>infra/&lt;layer&gt;</code>）に <code>cd</code> し、<code>$(cd ../bootstrap &amp;&amp; terraform output -raw tfstate_bucket)</code> で bootstrap の output を読んで、<code>-backend-config="bucket=..."</code> として <code>init</code> に渡します。</p>
+        <p class="why">バケット名はコードにもファイルにも書かれません。<code>tfstate_bucket</code> は bootstrap の <code>outputs.tf</code> で公開している値です。</p>
+        <p class="tip"><code>-input=false</code> は、足りない値があるとき対話で聞かずに失敗させるためです。CI からも呼べるようにする意図があります。</p>
+      </div>
+    </div>
+  </figure>
+
+  <div class="callout try">
+    <span class="ct">やってみよう（課金なし）</span>
+    <p>backend が本当に S3 を向いているか、state の中身を一覧してみましょう。</p>
+    <pre>cd infra/platform &amp;&amp; terraform state list</pre>
+    <p>bootstrap 側で同じことをすると、リソースが手元のファイルから読まれます。</p>
+  </div>
+
+  <h3>確認クイズ</h3>
+
+  <div class="quiz" data-id="ch1-q1" data-kind="選択">
+    <div class="q">bootstrap 層だけが local state を使っています。なぜでしょう？</div>
+    <ol hidden>
+      <li data-correct>state 用の S3 バケットは bootstrap 自身が作るので、そのバケットを bootstrap の backend にはできないから</li>
+      <li>S3 backend は、1 つの root module にしか設定できないから</li>
+      <li>local state のほうが、S3 より安全だから</li>
+      <li>bootstrap は一度も apply しないので、state が不要だから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>バケットを作る Terraform の state を、まだ無いそのバケットに置くことはできません。そこで bootstrap だけ local state で作り、そのファイルを commit して保管します。他の層はすべて、このバケットを backend にします。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch1-q2" data-kind="選択">
+    <div class="q">各層の <code>backend "s3"</code> に <code>bucket = "..."</code> が書かれていません。どうしてでしょう？</div>
+    <ol hidden>
+      <li>bucket は省略可能で、省略するとデフォルトのバケットが使われるから</li>
+      <li data-correct>backend ブロックでは変数や data source が使えず、アカウント ID を含むバケット名を直書きしないために、<code>-backend-config</code> で渡すから</li>
+      <li>バケットの指定は <code>provider "aws"</code> ブロックにあるから</li>
+      <li>bucket は <code>required_providers</code> で宣言するから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p><code>just tf-plan</code> などのレシピが、bootstrap の output <code>tfstate_bucket</code> を <code>-backend-config="bucket=..."</code> で渡します。このやり方を <b>partial configuration</b> と呼びます。data 層の <code>data.tf</code> にも、「backend 側は <code>-backend-config</code> で受け取るが data source には渡らないため、バケット名を同じ規則で組み立てる」というコメントがあります（第 4 章）。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch1-q3" data-kind="予測">
+    <div class="q">bootstrap で、何も変更しないまま <code>terraform destroy</code> を実行すると、どうなるでしょう？</div>
+    <ol hidden>
+      <li>確認プロンプトの後、バケットが削除される</li>
+      <li>バケットが空なら削除され、中身があれば失敗する</li>
+      <li>state ファイルだけが消えて、バケット自体は残る</li>
+      <li data-correct><code>prevent_destroy</code> のエラーで、plan の段階で止まる</li>
+    </ol>
+    <div class="explain" hidden>
+      <p><code>prevent_destroy = true</code> が付いたリソースを destroy する計画は、実行前にエラーになります。本当に作り直したいときは、コメントにあるとおり lifecycle ブロックを一時的に外します。「壊したくないものは、コードで壊せなくしておく」という考え方です。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch1-q4" data-kind="選択">
+    <div class="q"><code>use_lockfile = true</code> は何のための設定でしょう？</div>
+    <ol hidden>
+      <li>tfstate ファイルを暗号化するため</li>
+      <li data-correct>同時に apply が走ったとき、後から来た側をエラーで止めて state の破損を防ぐため</li>
+      <li>state の古い版を自動的に削除するため</li>
+      <li>DynamoDB のロックテーブルを自動で作るため</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>S3 のネイティブなロックです。従来必要だった DynamoDB のロックテーブル（<code>dynamodb_table</code>）は deprecated で、将来削除されるので、この構成では作りません。暗号化は bootstrap のバケット側の設定（SSE-S3）が担当します。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch1-q5" data-kind="選択">
+    <div class="q">state バケットのバージョニングを有効にしている、いちばんの目的はどれでしょう？</div>
+    <ol hidden>
+      <li>state のダウンロードを速くするため</li>
+      <li>他の層からも、同じ state を共有できるようにするため</li>
+      <li data-correct>state が壊れたり誤って上書きされたりしたとき、過去の版に戻せるようにするため</li>
+      <li>暗号化の強度を上げるため</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>tfstate を失うと、Terraform は実在するリソースを「知らないもの」として扱ってしまいます。バージョニングは、そのときの復旧手段です。共有は S3 backend 自体の機能、暗号化は SSE の設定で、それぞれ別の話です。</p>
+    </div>
+  </div>
+</section>
+<section class="chapter" id="ch2" data-num="2" data-title="platform：常時起動の土台" data-short="platform" data-layer="platform" hidden>
+  <header class="ch-head">
+    <p class="eyebrow"><span>CHAPTER 2</span><span class="chip l-platform">platform</span><span class="life always">常時起動</span></p>
+    <h2>platform：常時起動の土台</h2>
+    <p class="lead">DynamoDB・SQS・ECR・Secrets Manager・Cognito・アプリ用 S3、それに CI/CD 用の GitHub OIDC。<b>放置しても月 $1 程度で済み、消す意味がない</b>ものを集めた層です。セッション毎の層（network / data / app）は、これらを「あるもの」として使います。</p>
+    <div class="goals">
+      <h4>この章で読み解くこと</h4>
+      <ul>
+        <li>SQS と DLQ、ECR の <code>IMMUTABLE</code> とライフサイクルルールの、設計の意図</li>
+        <li>Secrets Manager の <code>recovery_window_in_days</code> と <code>ignore_changes</code></li>
+        <li>GitHub Actions が、アクセスキーなしで AWS に入る仕組み（OIDC の信頼ポリシー）</li>
+      </ul>
+    </div>
+  </header>
+
+  <h3>なぜここに置く？</h3>
+  <p>platform に置いたものには共通点があります。<b>1 リクエスト分の課金がほぼゼロ</b>（DynamoDB のオンデマンド、SQS、S3、ECR、Cognito）か、<b>置いても月数十セント</b>（Secrets Manager は 1 本 $0.40/月）で、しかも<b>セッションをまたいで残したい</b>ものばかりです。たとえば ECR のイメージは、app 層を壊しても残っていないと、次のセッションで毎回ビルドし直しです。</p>
+
+  <h3>コードを読む①：DynamoDB と SQS</h3>
+  <figure class="code" data-file="infra/platform/dynamodb.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">resource "aws_dynamodb_table" "items" {
+  name         = "${var.project_name}-items"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "id"
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="3-3" data-title="PAY_PER_REQUEST（オンデマンド）">
+        <p class="what">読み書きした分だけ課金されます。容量をあらかじめ確保しません。</p>
+        <p class="why">使っていない間の課金がほぼゼロなので、常時起動しても予算を圧迫しません。</p>
+      </div>
+      <div class="note" data-lines="4-9" data-title="キーだけを宣言する">
+        <p class="what">パーティションキー <code>id</code>（文字列）だけを宣言しています。<code>status</code> などの他の属性は書きません。</p>
+        <p class="why">DynamoDB はスキーマレスなので、キーになる属性以外は宣言不要です。アプリは <code>{ id, status }</code> を put します（<code>status</code> は <code>pending</code> / <code>processed</code>）。</p>
+      </div>
+    </div>
+  </figure>
+
+  <figure class="code" data-file="infra/platform/sqs.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">resource "aws_sqs_queue" "items_dlq" {
+  name = "${var.project_name}-items-dlq"
+}
+
+resource "aws_sqs_queue" "items" {
+  name                       = "${var.project_name}-items"
+  visibility_timeout_seconds = 30
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.items_dlq.arn
+    maxReceiveCount     = 3
+  })
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="1-3" data-title="DLQ を先に定義する">
+        <p class="what">DLQ（Dead Letter Queue）は、処理に失敗し続けたメッセージの「隔離先」です。中身は普通の SQS キューです。</p>
+        <p class="why">下の本体キューが、DLQ の ARN を参照します。Terraform は参照から依存関係を読み取り、DLQ を先に作ります。</p>
+      </div>
+      <div class="note" data-lines="7-7" data-title="visibility_timeout_seconds = 30">
+        <p class="what">メッセージを受信すると、30 秒間は他の受信者から見えなくなります。</p>
+        <p class="why">worker が処理している間、同じメッセージが二重に配られないようにするためです。</p>
+        <p class="if">worker が処理に失敗して削除しないと、30 秒後にまた見えるようになり、再配信されます。worker は失敗時にログを出すだけで削除しません（再試行は SQS に任せる設計）。</p>
+      </div>
+      <div class="note" data-lines="9-12" data-title="redrive_policy と maxReceiveCount = 3">
+        <p class="what">同じメッセージが 3 回受信されても消されなければ、DLQ に移されます。</p>
+        <p class="why">壊れたメッセージが、キューの中で永遠に再配信され続けるのを防ぎます。DLQ を見れば「何が処理できなかったか」を後から調べられます。</p>
+        <p class="tip"><code>jsonencode(...)</code> は、Terraform のオブジェクトを JSON 文字列に変換する関数です。SQS の API がポリシーを JSON 文字列で受け取るために使います。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む②：ECR（イメージ置き場）</h3>
+  <figure class="code" data-file="infra/platform/ecr.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">resource "aws_ecr_repository" "app" {
+  name                 = var.project_name
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "app" {
+  repository = aws_ecr_repository.app.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "最新10個のイメージのみ保持する"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 10
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="3-3" data-title="image_tag_mutability = IMMUTABLE">
+        <p class="what">一度 push したタグには、別のイメージを上書き push できなくなります。</p>
+        <p class="why"><code>latest</code> のような「使い回しタグ」だと、いま動いているのがどのコードか分かりません。この構成は<b>7 桁の commit SHA でタグ付け</b>し、「どの SHA が動いているか」を特定でき、ロールバックも「以前の SHA を指定し直す」だけで済みます。</p>
+        <p class="if">同じ SHA を再 push すると失敗します。だから CI（publish-image）は、push の前に <code>describe-images</code> でタグの有無を確認し、あればスキップします。</p>
+      </div>
+      <div class="note" data-lines="5-7" data-title="scan_on_push">
+        <p class="what">push のたびに、既知の脆弱性がないかをスキャンします。</p>
+      </div>
+      <div class="note" data-lines="10-29" data-title="ライフサイクルルール：最新 10 個だけ残す">
+        <p class="what">イメージ数が 10 を超えたら、古いものから <code>expire</code>（削除）します。</p>
+        <p class="why">publish-image は main のコミットごとにイメージを push します。1 イメージは 200〜300MB で、$0.10/GB・月。放っておくと数十個溜まり、$10 の予算の<b>無視できない割合</b>になります。衛生の話ではなく、<b>予算の話</b>です。</p>
+        <p class="if">副作用もあります。セッション中に main へ 10 コミット以上入ると、稼働中のタグまで消えて、タスク再起動時に pull できなくなる恐れがあります（README の注意点）。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む③：Secrets Manager と Cognito</h3>
+  <figure class="code" data-file="infra/platform/secrets.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">resource "aws_secretsmanager_secret" "app" {
+  name                    = "${var.project_name}/app"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "app" {
+  secret_id = aws_secretsmanager_secret.app.id
+  secret_string = jsonencode({
+    api_key = "REPLACE_ME"
+  })
+
+  # M4 以降、実キーは AWS CLI/コンソールから直接投入する運用にする。
+  # ignore_changes がないと次の terraform apply で secret_string がこのダミー値に巻き戻る。
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="3-3" data-title="recovery_window_in_days = 0">
+        <p class="what">シークレットを削除すると、<b>即座に</b>消えます。</p>
+        <p class="why">デフォルトでは削除後 7 日間「削除待ち」で残り、その間は<b>同じ名前で作り直せません</b>。さらに、削除待ちのシークレットにも課金されます。0 にすれば、destroy と再作成を何度繰り返しても状態が決定的です。</p>
+      </div>
+      <div class="note" data-lines="6-10" data-title="値はダミー">
+        <p class="what">値は <code>REPLACE_ME</code> のダミーです。この構成には、実際の外部 API キーがありません。</p>
+        <p class="why">Secrets Manager の使い方（保存・IAM で読み取りを許可）を、常時存在する形で学ぶための置き場です。</p>
+      </div>
+      <div class="note" data-lines="12-16" data-title="ignore_changes = [secret_string]">
+        <p class="what">Terraform は、<code>secret_string</code> が state と食い違っていても、差分として扱いません。</p>
+        <p class="why">実際のキーは CLI やコンソールから投入する運用です。<code>ignore_changes</code> が無いと、次の <code>apply</code> でダミー値に巻き戻ってしまいます。</p>
+        <p class="tip">data 層の DB シークレットは逆に、あえて <code>ignore_changes</code> を付けません（第 4 章）。「Terraform が値の持ち主かどうか」が分かれ目です。</p>
+      </div>
+    </div>
+  </figure>
+
+  <figure class="code" data-file="infra/platform/cognito.tf" data-first="15" data-lang="hcl">
+<script type="text/plain">  # 学習用の単一プロジェクトなので自己サインアップは無効にし、
+  # テストユーザーは `aws cognito-idp admin-create-user` で作成する運用にする。
+  admin_create_user_config {
+    allow_admin_create_user_only = true
+  }
+}
+
+resource "aws_cognito_user_pool_client" "web" {
+  name         = "${var.project_name}-web"
+  user_pool_id = aws_cognito_user_pool.app.id
+
+  # apps/web はブラウザから直接呼ぶパブリッククライアントなのでシークレットは発行しない。
+  generate_secret = false
+
+  explicit_auth_flows = [
+    "ALLOW_ADMIN_USER_PASSWORD_AUTH", # M5の動作確認（admin-initiate-auth）で使う
+    "ALLOW_USER_PASSWORD_AUTH",       # M6でapps/webがユーザー名+パスワードで直接ログインするために使う
+    "ALLOW_REFRESH_TOKEN_AUTH",
+  ]
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="15-19" data-title="自己サインアップを無効化">
+        <p class="what"><code>allow_admin_create_user_only = true</code> で、管理者以外はユーザーを作れません。</p>
+        <p class="why">誰でもサインアップできる状態をインターネットに晒さないためです。テストユーザーは <code>admin-create-user</code> で作ります。</p>
+      </div>
+      <div class="note" data-lines="26-27" data-title="generate_secret = false">
+        <p class="what">App Client に、クライアントシークレットを発行しません。</p>
+        <p class="why">ブラウザで動く SPA は、シークレットを隠せません（ソースを見れば読めます）。だから、シークレットが無い<b>パブリッククライアント</b>にします。</p>
+      </div>
+      <div class="note" data-lines="29-33" data-title="explicit_auth_flows">
+        <p class="what">許可するログイン方式を列挙します。ここでは、ユーザー名＋パスワードの直接ログイン（<code>USER_PASSWORD_AUTH</code>）を使います。</p>
+        <p class="why">ホスト型 UI（OAuth のコールバック方式）を使わないので、コールバック URL が要りません。これが第 0 章のクイズで見た「CloudFront のドメインが変わっても困らない」という話につながります。</p>
+        <p class="tip">API 側は、ここで発行されたアクセストークン（JWT）を <code>aws-jwt-verify</code> で検証します。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む④：GitHub Actions が、アクセスキーなしで入る仕組み</h3>
+  <p>CI/CD に IAM ユーザーのアクセスキーを渡すと、それが漏れた瞬間に終わりです。代わりに <b>OIDC</b>（OpenID Connect）を使います。GitHub Actions が実行時に「私は、このリポジトリの main ブランチで動いている workflow です」という<b>署名付きトークン</b>を出し、AWS が「その条件なら、このロールを貸す」と判断します。長期に有効な鍵はどこにも保存されません。</p>
+  <figure class="code" data-file="infra/platform/iam.tf" data-first="1" data-lang="hcl">
+<script type="text/plain"># GitHub Actions が OIDC でこのアカウントのロールを assume するための ID プロバイダ。
+# アカウントに同じ URL のものは 1 つしか作れないため、既に存在する場合は terraform import で取り込む。
+# thumbprint は AWS が GitHub の証明書を自動で検証するので指定しない。
+resource "aws_iam_openid_connect_provider" "github" {
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
+}
+
+# platform 層の 2 ロールに共通の信頼ポリシー。main ブランチで動く workflow だけが assume できる。
+# workflow_run / workflow_dispatch のどちらで起動しても、main 上の実行なら sub は同じ形になる。
+# sub は GitHub の OIDC の sub クレームの接頭辞（var.github_subject_prefix。不変サブジェクトなら所有者/リポジトリの ID 入り）
+# + `:ref:refs/heads/main`。名前ではなく ID で固定するので、リポジトリのリネームや同名での作り直しに乗っ取られない。
+data "aws_iam_policy_document" "github_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["${var.github_subject_prefix}:ref:refs/heads/main"]
+    }
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="4-7" data-title="OIDC プロバイダ（アカウントに 1 つ）">
+        <p class="what">「GitHub Actions が発行するトークンを、このアカウントは信頼する」という登録です。</p>
+        <p class="why">GitHub の OIDC プロバイダは、1 アカウントに同じ URL のものを 1 つしか作れません。すでにあれば <code>terraform import</code> で取り込みます。</p>
+        <p class="tip">thumbprint（証明書の指紋）は書いていません。AWS が GitHub の証明書を自動で検証するためです。</p>
+      </div>
+      <div class="note" data-lines="17-20" data-title="誰がロールを引き受けられるか（principals）">
+        <p class="what"><code>Federated</code> プリンシパルとして、上で作った OIDC プロバイダを指定します。アクションは <code>sts:AssumeRoleWithWebIdentity</code> です。</p>
+        <p class="why">IAM ユーザーではなく「外部の ID プロバイダで認証された主体」にだけ、ロールを貸す、という意味です。</p>
+      </div>
+      <div class="note" data-lines="22-26" data-title="aud 条件">
+        <p class="what">トークンの宛先（<code>aud</code>）が <code>sts.amazonaws.com</code> であることを要求します。</p>
+        <p class="why">別のサービス宛てに発行されたトークンの、使い回しを防ぎます。</p>
+      </div>
+      <div class="note" data-lines="28-32" data-title="sub 条件：main ブランチだけ">
+        <p class="what"><code>sub</code>（トークンの主体）が「<code>&lt;リポジトリを特定する接頭辞&gt;:ref:refs/heads/main</code>」のときだけ許可します。</p>
+        <p class="why">CI（検証）は AWS に一切触らないので、feature ブランチからロールを引き受ける必要はありません。<b>main の workflow だけ</b>に絞れば、未レビューのコードが権限を持てません。接頭辞は GitHub の「不変サブジェクト」で、名前ではなく<b>所有者とリポジトリの ID</b> を含みます。</p>
+        <p class="if">リネームや、同じ名前での作り直しがあっても、ID が違うので別人に乗っ取られません。実機では、名前だけの旧形式の条件だと <code>Not authorized to perform sts:AssumeRoleWithWebIdentity</code> で拒否されました。</p>
+      </div>
+    </div>
+  </figure>
+
+  <p>次は deploy-api ロールの権限です。<b>最小権限は「対象を明示できるところは明示する」</b>ことです。ただし、AWS の仕様上、明示できない操作もあります。</p>
+  <figure class="code" data-file="infra/platform/iam.tf" data-first="87" data-lang="hcl">
+<script type="text/plain">  # RegisterTaskDefinition / DescribeTaskDefinition はリソースレベルの権限指定に対応していないため "*"
+  statement {
+    sid       = "EcsTaskDefinition"
+    actions   = ["ecs:DescribeTaskDefinition", "ecs:RegisterTaskDefinition"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid     = "EcsService"
+    actions = ["ecs:DescribeServices", "ecs:UpdateService"]
+    resources = [
+      "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${var.project_name}/${var.project_name}-api",
+      "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${var.project_name}/${var.project_name}-worker",
+    ]
+  }
+
+  # IAM ポリシーは存在しないロールの ARN も書けるので、app 層が destroy 済みでも問題ない。
+  # ワイルドカード（role/${var.project_name}-*）にすると github_* ロール自身にもマッチしてしまうため、
+  # infra/app/iam.tf のロール名を明示する。ロール名を変えるときはここも合わせる。
+  # ecs-tasks にしか渡せないよう iam:PassedToService で限定する。
+  statement {
+    sid     = "PassTaskRoles"
+    actions = ["iam:PassRole"]
+    resources = [
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-ecs-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-api-task",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-worker-task",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="87-92" data-title="どうしても「*」になる権限">
+        <p class="what">タスク定義の登録・参照は、リソースを指定して権限を絞れない API です。だから <code>resources = ["*"]</code> です。</p>
+        <p class="why">最小権限は「全部絞る」ことではなく、「絞れるものは絞り、絞れない理由をコメントに残す」ことです。</p>
+      </div>
+      <div class="note" data-lines="94-101" data-title="サービスは ARN で明示">
+        <p class="what">更新できるサービスを、api と worker の 2 つに限定します。ARN は、リージョン・アカウント ID・プロジェクト名から組み立てています。</p>
+        <p class="why">他の ECS サービスが将来増えても、この CI ロールでは触れません。</p>
+      </div>
+      <div class="note" data-lines="103-121" data-title="iam:PassRole を絞る">
+        <p class="what">ECS にロールを渡す権限（<code>iam:PassRole</code>）を、3 つのロール名の明示と、渡し先が <code>ecs-tasks</code> に限る条件で絞っています。</p>
+        <p class="why">タスク定義を登録する側は、ロールを「渡せる」必要があります。この権限が広いと、強いロールを渡して権限昇格ができます。<code>role/&lt;プロジェクト名&gt;-*</code> のワイルドカードにすると、<b>この github_* ロール自身にもマッチ</b>してしまうので、名前を明示しています。</p>
+        <p class="tip">IAM ポリシーには、まだ存在しないロールの ARN も書けます。だから、app 層（セッション毎）のロールを、常時起動の platform 層から参照できます。</p>
+      </div>
+    </div>
+  </figure>
+
+  <div class="callout why">
+    <span class="ct">設計判断</span>
+    <p>このロール（<code>github_deploy_api</code>）は、なぜ app 層ではなく platform 層に置くのでしょう。app 層は毎セッション destroy されます。ロールが app 層にあると、CI の設定（GitHub Variables に登録したロール ARN）を毎回作り直すことになります。<b>権限を受け取る側が消えても、ロール自体は常時存在させたい</b>ので、常時起動層に置いています。これは第 7 章の「CI/CD の粒度がライフサイクルに従う」につながります。</p>
+  </div>
+
+  <h3>確認クイズ</h3>
+
+  <div class="quiz" data-id="ch2-q1" data-kind="予測">
+    <div class="q">ECR は <code>IMMUTABLE</code> です。ローカルから、すでに存在する <code>abc1234</code> というタグに、内容を変えたイメージを <code>docker push</code> するとどうなるでしょう？</div>
+    <ol hidden>
+      <li>古いイメージが、新しいイメージで上書きされる</li>
+      <li>2 つのイメージが、同じタグで並んで残る</li>
+      <li data-correct>push が失敗する</li>
+      <li>古いイメージが自動で削除され、新しいものが残る</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>IMMUTABLE では、既存のタグへの上書きが拒否されます。だからこの構成は <code>latest</code> を使わず、7 桁の commit SHA でタグ付けします。「タグ＝コミット」なので、動いているコードの特定もロールバックも簡単です。ECR が IMMUTABLE なので、CI（publish-image）も同じタグが既にあれば push を飛ばします。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch2-q2" data-kind="選択">
+    <div class="q">ECR のライフサイクルポリシー（最新 10 個だけ保持）を入れ忘れると、何が起きるでしょう？</div>
+    <ol hidden>
+      <li>ECR への push が、できなくなる</li>
+      <li>イメージのスキャンが、動かなくなる</li>
+      <li data-correct>main のコミットごとに 200〜300MB のイメージが溜まり続け、ストレージ課金が月 $10 の予算を圧迫する</li>
+      <li>古いタグが自動で上書きされ、ロールバックできなくなる</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>ECR のストレージは $0.10/GB・月です。数十イメージ溜まると、予算の無視できない割合になります。このポリシーは衛生のためではなく、<b>予算のための設定</b>です。ただし代償として、セッション中に main へ 10 コミット以上入ると、稼働中のタグが消える可能性があります。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch2-q3" data-kind="選択">
+    <div class="q">platform の <code>aws_secretsmanager_secret_version.app</code> には <code>ignore_changes = [secret_string]</code> があります。この設定が<b>必要</b>な理由はどれでしょう？</div>
+    <ol hidden>
+      <li>secret_string が大きすぎて、差分の計算が遅くなるから</li>
+      <li>Secrets Manager が、値の更新を Terraform 経由では受け付けないから</li>
+      <li data-correct>実キーは CLI やコンソールで投入する運用で、無いと次の apply でダミー値（<code>REPLACE_ME</code>）に巻き戻ってしまうから</li>
+      <li>recovery_window が 0 のとき、必ず必要になる設定だから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>Terraform が「値の持ち主でない」（外から値を入れる運用の）シークレットには、<code>ignore_changes</code> を付けます。data 層の DB シークレットは反対に、Terraform が <code>random_password</code> で値を作る持ち主なので、付けません（第 4 章）。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch2-q4" data-kind="予測">
+    <div class="q">feature ブランチ上の workflow が、<code>github_deploy_api</code> ロールを assume しようとします。何が起きるでしょう？</div>
+    <ol hidden>
+      <li>ロールを assume できて、ECS を更新できる</li>
+      <li>assume はできるが、ECS の更新だけが拒否される</li>
+      <li data-correct>信頼ポリシーの <code>sub</code> 条件（main ブランチのみ）に合わず、AssumeRoleWithWebIdentity が拒否される</li>
+      <li>GitHub 側の設定で、workflow 自体が起動しない</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>ロールの信頼ポリシーが、<code>sub</code> を <code>...:ref:refs/heads/main</code> に固定しています。assume そのものが拒否されるので、権限を見に行く前に止まります。deploy-api の workflow が最初のステップで「main から実行しているか」を確認するのは、この失敗を「分かりやすいエラー」にするためです。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch2-q5" data-kind="予測">
+    <div class="q">あるメッセージの処理（<code>processItem</code>）が、毎回例外で失敗します。worker は例外を握りつぶして<b>ログを出すだけ</b>で、メッセージを削除しません。どうなるでしょう？</div>
+    <ol hidden>
+      <li>worker が、無限ループで同じメッセージを処理し続ける</li>
+      <li>1 回失敗した時点で、メッセージが DLQ に移される</li>
+      <li data-correct>30 秒後に再配信され、3 回受信しても削除されなければ DLQ に移される</li>
+      <li>SQS がメッセージを自動で削除し、失敗は記録に残らない</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>worker は「失敗したら削除しない」だけで、再試行の制御を SQS（可視性タイムアウト 30 秒＋ <code>maxReceiveCount = 3</code>）に任せています。DLQ に移った後も、DynamoDB の status は <code>pending</code> のままです（<code>failed</code> という状態は作っていません）。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch2-q6" data-kind="選択">
+    <div class="q"><code>iam:PassRole</code> の対象を <code>role/${var.project_name}-*</code> のようなワイルドカードにしていません。その理由はどれでしょう？</div>
+    <ol hidden>
+      <li>ワイルドカードは、IAM ポリシーの <code>resources</code> に書けないから</li>
+      <li>ワイルドカードだと、ロールがまだ存在しないとき plan が失敗するから</li>
+      <li data-correct><code>github_publish</code> など CI 用ロール自身にもマッチしてしまい、権限昇格に使われうるから</li>
+      <li>ワイルドカードは、apply のたびに差分を生むから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>ロール名が <code>&lt;プロジェクト名&gt;-github-...</code> で始まるものにもマッチしてしまうからです。PassRole は「そのロールを別サービスに使わせる」権限なので、対象を絞らないと、意図しないロールを渡せてしまいます。なお、IAM ポリシーには存在しないロールの ARN も書けるので、app 層が destroy 済みでも問題ありません。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch2-q7" data-kind="選択">
+    <div class="q">Cognito の App Client で <code>generate_secret = false</code> にしています。理由はどれでしょう？</div>
+    <ol hidden>
+      <li>シークレットを発行すると、Cognito の料金が上がるから</li>
+      <li data-correct>ブラウザで動く SPA はシークレットを隠せないので、シークレットの無い「パブリッククライアント」にするから</li>
+      <li>シークレットを使うと、JWT の検証ができなくなるから</li>
+      <li>USER_PASSWORD_AUTH は、シークレットがあると使えないから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>SPA のコードはユーザーのブラウザに配られるので、そこに埋めたシークレットは誰でも読めます。だから「持たないクライアント」にして、ユーザー名とパスワードで直接ログインする方式にしています。</p>
+    </div>
+  </div>
+</section>
+<section class="chapter" id="ch3" data-num="3" data-title="network：VPC とセキュリティグループ" data-short="network" data-layer="network" hidden>
+  <header class="ch-head">
+    <p class="eyebrow"><span>CHAPTER 3</span><span class="chip l-network">network</span><span class="life session">セッション毎</span></p>
+    <h2>network：VPC とセキュリティグループ</h2>
+    <p class="lead">VPC・2AZ の subnet・NAT Gateway・route table、そして ALB / ECS / RDS / 踏み台の SG（セキュリティグループ）。<b>教科書どおりの private subnet + NAT</b> 構成を、コストの高い部分だけセッション毎に作り直します。</p>
+    <div class="goals">
+      <h4>この章で読み解くこと</h4>
+      <ul>
+        <li>public / private subnet と、NAT Gateway が要る理由</li>
+        <li>SG を「1 ルール = 1 リソース」で書く attachment パターン</li>
+        <li>この層には「箱（SG）」だけがあり、中身（ALB・ECS・RDS 本体）は後の層にある設計</li>
+      </ul>
+    </div>
+  </header>
+
+  <h3>コードを読む①：VPC と subnet</h3>
+  <figure class="code" data-file="infra/network/vpc.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">resource "aws_vpc" "app" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "${var.project_name}-app"
+  }
+}
+
+resource "aws_internet_gateway" "app" {
+  vpc_id = aws_vpc.app.id
+
+  tags = {
+    Name = "${var.project_name}-app"
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="2-2" data-title="10.0.0.0/16">
+        <p class="what">65,536 個の IP アドレスを持つ、プライベート IP レンジです。この中を、後で 4 つの /20 subnet に分けます。</p>
+      </div>
+      <div class="note" data-lines="3-4" data-title="DNS サポート">
+        <p class="what">VPC 内部での名前解決（<code>enable_dns_support</code>）と、パブリック IP を持つリソースへのホスト名割り当て（<code>enable_dns_hostnames</code>）を有効にします。</p>
+        <p class="why">RDS のエンドポイントのような AWS 管理のホスト名解決に必要です。</p>
+      </div>
+      <div class="note" data-lines="11-17" data-title="Internet Gateway">
+        <p class="what">VPC をインターネットに繋ぐ「玄関」です。これ自体はリソースを 1 個作るだけで、どの subnet が使うかは route table 側で決めます。</p>
+      </div>
+    </div>
+  </figure>
+
+  <figure class="code" data-file="infra/network/subnets.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">resource "aws_subnet" "public_1a" {
+  vpc_id            = aws_vpc.app.id
+  cidr_block        = "10.0.0.0/20"
+  availability_zone = "${var.aws_region}a"
+  # 将来この subnet に置くリソース（bastion等の検証用インスタンス）が自動でパブリックIPを持てるようにする。
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${var.project_name}-public-1a"
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="1-11" data-title="public subnet ×2AZ">
+        <p class="what">この 1a のほかに、同じ形の 1c もあります（コードは省略）。ALB はこの 2 つの public subnet にまたがって配置されます。</p>
+        <p class="why">ALB は複数 AZ にまたがることが要件です。1 つの AZ が落ちても、もう一方で受け続けられます。</p>
+      </div>
+    </div>
+  </figure>
+  <figure class="code" data-file="infra/network/subnets.tf" data-first="25" data-lang="hcl">
+<script type="text/plain">resource "aws_subnet" "private_1a" {
+  vpc_id            = aws_vpc.app.id
+  cidr_block        = "10.0.32.0/20"
+  availability_zone = "${var.aws_region}a"
+
+  tags = {
+    Name = "${var.project_name}-private-1a"
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="25-33" data-title="private subnet ×2AZ">
+        <p class="what">ECS タスクと RDS は、こちらの private subnet（1a / 1c。実ファイルではこの後に 1c の定義が続きます）に置かれます。<code>map_public_ip_on_launch</code> はありません。</p>
+        <p class="why">アプリと DB を、インターネットから直接到達できない場所に置きます。これが「教科書どおりの本番構成」の核です。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む②：NAT Gateway と route table</h3>
+  <p>private subnet のリソースは、外から到達されない代わりに、<b>自分から外に出ることもできません</b>。しかし ECS タスクは ECR からイメージを pull し、Secrets Manager や CloudWatch Logs にも到達する必要があります。そこで、外向きの通信だけを許す NAT Gateway を使います。</p>
+  <figure class="code" data-file="infra/network/routing.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">resource "aws_eip" "nat" {
+  domain = "vpc"
+
+  tags = {
+    Name = "${var.project_name}-nat"
+  }
+}
+
+resource "aws_nat_gateway" "app" {
+  allocation_id = aws_eip.nat.id
+  # NAT Gatewayは1個のみ。private subnet 1a/1cで共有する（コスト優先、マルチAZ冗長化はしない）。
+  subnet_id = aws_subnet.public_1a.id
+
+  tags = {
+    Name = "${var.project_name}-app"
+  }
+
+  # IGWがVPCにアタッチされる前だとNAT Gateway作成が失敗しうる。
+  # 両者に直接の属性参照が無いため、明示的にdepends_onで順序を強制する。
+  depends_on = [aws_internet_gateway.app]
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="1-6" data-title="Elastic IP">
+        <p class="what">NAT Gateway に付ける固定パブリック IP です。</p>
+        <p class="why">NAT Gateway 経由の通信の送信元 IP を固定します。</p>
+        <p class="if">NAT Gateway から切り離された未アタッチの EIP は、それだけで $0.005/h（月 $3.60）課金され続けます。README が「予算が静かに溶ける最大の経路」と呼ぶのはこれです。<code>just leaks</code> で必ず確認します。</p>
+      </div>
+      <div class="note" data-lines="9-13" data-title="NAT は 1 個だけ、public subnet に置く">
+        <p class="what">NAT Gateway 自体は public subnet（1a）に置きます。private の 1a と 1c、両方から共有します。</p>
+        <p class="why">本来はマルチ AZ で NAT も 2 個（各 AZ に 1 個）にするのが定石ですが、この構成は<b>コスト優先で冗長化しません</b>。学習の主目的（NAT の役割を体験すること）には 1 個で十分という判断です。</p>
+      </div>
+      <div class="note" data-lines="19-21" data-title="depends_on で順序を強制する">
+        <p class="what"><code>aws_nat_gateway.app</code> のどの属性も、Internet Gateway を直接参照していません。だから Terraform は、放っておくと両者を並行して作ろうとします。</p>
+        <p class="why">NAT Gateway の作成には、IGW が VPC に付いていることが必要です。属性の参照が無い依存関係は、Terraform には見えないので、<code>depends_on</code> で明示的に順序を教えます。</p>
+        <p class="tip">他のほとんどの依存（<code>aws_subnet.public_1a.id</code> など）は、属性参照だけで自動的に順序が決まります。<code>depends_on</code> は、それでは表現できない依存にだけ使う「最後の手段」です。</p>
+      </div>
+    </div>
+  </figure>
+
+  <figure class="code" data-file="infra/network/routing.tf" data-first="47" data-lang="hcl">
+<script type="text/plain">resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.app.id
+
+  tags = {
+    Name = "${var.project_name}-private"
+  }
+}
+
+resource "aws_route" "private_nat" {
+  route_table_id         = aws_route_table.private.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.app.id
+}
+
+resource "aws_route_table_association" "private_1a" {
+  subnet_id      = aws_subnet.private_1a.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "private_1c" {
+  subnet_id      = aws_subnet.private_1c.id
+  route_table_id = aws_route_table.private.id
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="55-59" data-title="0.0.0.0/0 を NAT に向ける">
+        <p class="what">「どこ向けか分からない外向きの通信は、すべて NAT Gateway へ」というルートです。public 側の同じ形のルートは、NAT ではなく Internet Gateway に向きます（この後の対比が要点）。</p>
+      </div>
+      <div class="note" data-lines="61-69" data-title="1a と 1c、両方を同じ route table に紐付ける">
+        <p class="what">private の 2 つの subnet が、共通の 1 つの route table を使います。</p>
+        <p class="why">NAT Gateway 自体を 1 個しか作らないので（コスト優先）、route table も 1 つで共有します。</p>
+      </div>
+    </div>
+  </figure>
+
+  <div class="callout try">
+    <span class="ct">やってみよう（README 記載の演習・課金あり）</span>
+    <p>「なぜ private subnet に NAT が要るのか」を、実際に壊して確かめる演習です。<code>network</code> を apply したセッション中に：</p>
+    <pre>terraform destroy -target=aws_route.private_nat</pre>
+    <p>private subnet 内のリソースからの outbound（ECR pull など）が失敗することを確認したら、<code>just tf-apply network</code> で元に戻します。</p>
+  </div>
+
+  <h3>コードを読む③：SG を「1 ルール = 1 リソース」で書く</h3>
+  <p>SG のルールは、<code>aws_security_group</code> の中に <code>ingress</code>/<code>egress</code> ブロックとして埋め込む書き方もできますが、この構成では<b>使いません</b>。代わりに <code>aws_vpc_security_group_ingress_rule</code> / <code>..._egress_rule</code> という、<b>1 ルール = 1 リソース</b>の attachment パターンで書きます。</p>
+  <figure class="code" data-file="infra/network/security_groups.tf" data-first="37" data-lang="hcl">
+<script type="text/plain">resource "aws_security_group" "ecs" {
+  name        = "${var.project_name}-ecs"
+  description = "Security group for ECS tasks. Allows the app port from ALB only."
+  vpc_id      = aws_vpc.app.id
+
+  tags = {
+    Name = "${var.project_name}-ecs"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "ecs_from_alb" {
+  security_group_id            = aws_security_group.ecs.id
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = var.app_port
+  to_port                      = var.app_port
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "ecs_to_rds" {
+  security_group_id            = aws_security_group.ecs.id
+  referenced_security_group_id = aws_security_group.rds.id
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+}
+
+# NAT Gateway経由でECR pull・Secrets Manager・CloudWatch Logs等のAWS管理HTTPSエンドポイントに到達するため。
+resource "aws_vpc_security_group_egress_rule" "ecs_https" {
+  security_group_id = aws_security_group.ecs.id
+  cidr_ipv4          = "0.0.0.0/0"
+  from_port          = 443
+  to_port            = 443
+  ip_protocol        = "tcp"
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="37-44" data-title="SG 本体は「箱」だけ">
+        <p class="what"><code>aws_security_group.ecs</code> 自体には、ルールが 1 行もありません。名前と説明、所属 VPC だけです。</p>
+        <p class="why">ルールを本体に埋め込むと、リソースの外から個別のルールを参照・変更しづらくなります。1 ルール 1 リソースにすると、Terraform の plan に「このルールだけ」が差分として出て、読みやすくなります。</p>
+      </div>
+      <div class="note" data-lines="46-52" data-title="referenced_security_group_id で「相手」を指定">
+        <p class="what">許可する送信元を、IP アドレスではなく<b>別の SG</b>で指定します。「ALB の SG が付いているものからなら通す」という意味です。</p>
+        <p class="why">ALB の IP は変わりえますが、SG の ID は変わりません。IP レンジでの許可より安全で、メンテナンスも要りません。</p>
+      </div>
+      <div class="note" data-lines="61-65" data-title="デフォルトの全許可 egress が無い">
+        <p class="what">素の <code>aws_security_group</code>（ルール埋め込み型）を <code>egress</code> を書かずに作ると、AWS 側は本来「全許可」を残しますが、Terraform はその暗黙のデフォルトルールを<b>削除します</b>。だから、疎通に必要な egress は、すべて明示的に用意しなければなりません。</p>
+        <p class="why">ECS タスクは、RDS への 5432（1 つ上のルール）と、AWS 管理エンドポイントへの 443（このルール）が無いと、何も外に出られなくなります。</p>
+        <p class="if">この 443 ルールを忘れると、ECR pull・Secrets Manager 参照・ログ送信がすべてタイムアウトし、原因が分かりにくい形でタスクが起動失敗します。</p>
+      </div>
+    </div>
+  </figure>
+
+  <div class="callout why">
+    <span class="ct">設計判断</span>
+    <p>ALB → ECS → RDS の SG は、それぞれ「1 つ前からだけ通す」という<b>鎖</b>になっています。ALB は 80/443 をインターネットに開き、ECS は「ALB の SG からの app_port だけ」を受け、RDS は「ECS の SG からの 5432 だけ」を受けます。踏み台（bastion）は ingress を一切持たず、RDS への 5432 は<b>踏み台からの egress</b>として許可されています（SSM Session Manager は Agent 側から接続しに行く方式のため）。「誰が誰に何を許すか」を、SG の参照関係だけで説明できるのがこのパターンの利点です。</p>
+  </div>
+
+  <h3>この層にあるもの・まだ無いもの</h3>
+  <p>network 層には ALB・ECS タスク・RDS の<b>実体</b>は 1 つもありません。あるのは VPC・subnet・route table と、SG という「箱＋ルール」だけです。実体は、それぞれ app 層（第 5 章）と data 層（第 4 章）で作られ、この層の SG ID を <code>terraform_remote_state</code> 経由で参照してアタッチします。</p>
+
+  <div class="callout warn">
+    <span class="ct">運用上の注意</span>
+    <p>data 層・app 層が存在する状態で <code>network</code> を先に destroy すると、<code>DependencyViolation</code> で失敗し、しかも NAT Gateway と EIP が<b>壊れずに残って課金が続きます</b>。壊す順序は必ず app → data → network（<code>just down</code> がこの順で実行します）。</p>
+  </div>
+
+  <h3>確認クイズ</h3>
+
+  <div class="quiz" data-id="ch3-q1" data-kind="選択">
+    <div class="q">ECS タスクの SG に、<code>0.0.0.0/0</code> への 443 egress ルールが必要な理由はどれでしょう？</div>
+    <ol hidden>
+      <li>ALB からのヘルスチェックを受けるため</li>
+      <li data-correct>Terraform が SG のデフォルト全許可 egress を削除するため、ECR pull や Secrets Manager などへの通信を明示しないと塞がってしまうから</li>
+      <li>RDS への接続に、この 443 ポートを使うから</li>
+      <li>インターネットから直接 ECS タスクにアクセスできるようにするため</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>AWS の素のデフォルトは全許可 egress ですが、<code>aws_security_group</code> リソースは Terraform 管理下に置いた瞬間にそれを削除します。ECR pull・Secrets Manager 参照・ログ送信は、すべて 443 の HTTPS 通信なので、これが無いとタスクは何も取得できず起動に失敗します。RDS への通信は別ルール（5432）です。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch3-q2" data-kind="選択">
+    <div class="q">RDS の SG が、許可する送信元を <code>referenced_security_group_id</code>（ECS の SG）で指定しているのはなぜでしょう？</div>
+    <ol hidden>
+      <li>IP アドレスでの指定は、Terraform の仕様上できないから</li>
+      <li data-correct>ECS タスクの IP は変わりうるが SG の ID は変わらないため、IP レンジでの許可よりメンテナンス不要で安全だから</li>
+      <li>SG 参照にすると、通信が暗号化されるから</li>
+      <li>RDS は IP アドレスからの ingress を受け付けない仕様だから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>ECS タスクは awsvpc モードで起動のたびに新しい ENI（と IP）を得ます。IP を毎回 SG に書き足すのは非現実的です。SG 同士の参照なら、「その SG が付いているものから」という条件が、IP に関わらず成り立ちます。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch3-q3" data-kind="予測">
+    <div class="q">app 層・data 層が apply 済みの状態で、先に <code>just tf-destroy network</code> を実行するとどうなるでしょう？</div>
+    <ol hidden>
+      <li>network だけが正常に destroy され、他の層は影響を受けない</li>
+      <li>app 層・data 層のリソースが、network と一緒に自動で destroy される</li>
+      <li data-correct><code>DependencyViolation</code> で destroy が失敗し、NAT Gateway・EIP が残って課金が続く</li>
+      <li>plan の段階でエラーになり、destroy 自体が始まらない</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>data・app 層が VPC や SG に依存したままなので、AWS 側が VPC の削除を拒否します。正しい順序は app → data → network です。<code>just down</code> はこの順で destroy します。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch3-q4" data-kind="選択">
+    <div class="q">NAT Gateway をマルチ AZ で冗長化せず、1 個だけにしているのはなぜでしょう？</div>
+    <ol hidden>
+      <li>NAT Gateway は、そもそも複数作ることができない仕様だから</li>
+      <li>マルチ AZ にすると、private subnet 間の通信ができなくなるから</li>
+      <li data-correct>コスト優先の学習環境で、NAT の役割を学ぶ目的には 1 個で十分という判断だから</li>
+      <li>2 つ目の NAT Gateway には、追加の Elastic IP の割り当てができないから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>本来はAZごとにNAT Gatewayを置くのが定石ですが、この構成はコストを最優先しています。NAT Gateway 1 個で $0.062/h、EIP で $0.005/h。2 個にすればこれが単純に倍になります。学習の主目的は「private subnet に NAT がなぜ要るか」の体験なので、冗長化は見送っています。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch3-q5" data-kind="選択">
+    <div class="q">SG のルールを、本体に埋め込まず <code>aws_vpc_security_group_ingress_rule</code> のような別リソースで書く利点はどれでしょう？</div>
+    <ol hidden>
+      <li>ルールの評価順序を、明示的に指定できるようになる</li>
+      <li data-correct>1 ルール = 1 リソースになるので、Terraform の plan で「どのルールが変わったか」がそのまま差分として見える</li>
+      <li>SG 自体の作成コストが下がる</li>
+      <li>referenced_security_group_id が使えるのは、この書き方のときだけだから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>本体に埋め込む書き方では、ルールを 1 つ変えただけでも SG 全体が置き換え対象になりがちで、diff も読みにくくなります。attachment パターンなら、変更のあったルールのリソースだけが plan に出ます。</p>
+    </div>
+  </div>
+</section>
+<section class="chapter" id="ch4" data-num="4" data-title="data：唯一ステートフルな層" data-short="data" data-layer="data" hidden>
+  <header class="ch-head">
+    <p class="eyebrow"><span>CHAPTER 4</span><span class="chip l-data">data</span><span class="life session">セッション毎・ステートフル</span></p>
+    <h2>data：唯一ステートフルな層</h2>
+    <p class="lead">RDS PostgreSQL・DB 認証情報のシークレット・SSM 踏み台 EC2。6 層の中で<b>唯一「データが消えると困る」</b>層です（正確には、RDS のデータだけは destroy で消える前提で設計されています）。この章では、<code>terraform_remote_state</code> による層間の配線と、自前でパスワードを管理する判断を読みます。</p>
+    <div class="goals">
+      <h4>この章で読み解くこと</h4>
+      <ul>
+        <li><code>terraform_remote_state</code> で、他の層の output を読む方法</li>
+        <li><code>manage_master_user_password</code> を使わず、自前でシークレットを持つ理由</li>
+        <li>ECS Exec でも VPC エンドポイントでもなく、踏み台 EC2 が必要な理由</li>
+      </ul>
+    </div>
+  </header>
+
+  <h3>コードを読む①：network 層を参照する</h3>
+  <p>RDS を置く subnet と SG は、この層では作りません。network 層が作ったものを読みます。</p>
+  <figure class="code" data-file="infra/data/data.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">data "aws_caller_identity" "current" {}
+
+# 層間の配線。tfstate バケット名は infra/bootstrap/main.tf と同じ規則で組み立てる
+# （backend 側はバケット名を -backend-config で受け取るが、data source には渡らないため）。
+data "terraform_remote_state" "network" {
+  backend = "s3"
+
+  config = {
+    bucket = "${var.project_name}-tfstate-${data.aws_caller_identity.current.account_id}"
+    key    = "network/terraform.tfstate"
+    region = var.aws_region
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="3-4" data-title="なぜバケット名をここでも組み立て直すのか">
+        <p class="what">第 1 章で見た <code>-backend-config="bucket=..."</code> は、<b>この層自身の backend</b> の設定にしか使えません。<code>terraform_remote_state</code> という別の data source には、その値は渡りません。</p>
+        <p class="why">だから、bootstrap のバケット名の組み立て規則（<code>&lt;project_name&gt;-tfstate-&lt;account_id&gt;</code>）を、ここでもう一度書いています。同じ規則を 2 箇所に書く重複ですが、コメントに理由が明記されています。</p>
+      </div>
+      <div class="note" data-lines="5-12" data-title="terraform_remote_state で他層の tfstate を読む">
+        <p class="what">network 層の <b>tfstate そのもの</b>を読み込み、<code>data.terraform_remote_state.network.outputs.xxx</code> の形で、その層の output にアクセスできるようにします。</p>
+        <p class="why">下のコードで、この <code>outputs.private_subnet_ids</code> や <code>outputs.rds_security_group_id</code> を実際に使います。</p>
+        <p class="if">network 層が destroy 済み（output が空）の状態でこれを参照すると、plan が分かりにくいエラーで落ちます。<code>just up</code> が必ず network → data → app → edge の順で apply するのは、これを避けるためです。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む②：RDS 本体</h3>
+  <figure class="code" data-file="infra/data/rds.tf" data-first="32" data-lang="hcl">
+<script type="text/plain">resource "aws_db_instance" "app" {
+  identifier     = "${var.project_name}-app"
+  engine         = "postgres"
+  engine_version = var.db_engine_version
+  instance_class = var.db_instance_class
+
+  allocated_storage = var.db_allocated_storage
+  storage_type      = "gp3"
+  storage_encrypted = true
+
+  # admin / postgres のような推測されやすい名前を避ける。
+  db_name  = "app"
+  username = "app"
+  password = random_password.db.result
+
+  db_subnet_group_name   = aws_db_subnet_group.app.name
+  parameter_group_name   = aws_db_parameter_group.app.name
+  vpc_security_group_ids = [data.terraform_remote_state.network.outputs.rds_security_group_id]
+  publicly_accessible    = false
+  multi_az               = false
+
+  # セッション毎に destroy する学習環境。データは消える前提で、状態を決定的にする。
+  skip_final_snapshot     = true
+  deletion_protection     = false
+  backup_retention_period = 0
+  apply_immediately       = true
+
+  tags = {
+    Name = "${var.project_name}-app"
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="45-45" data-title="password = random_password.db.result">
+        <p class="what">この後のコードで作る <code>random_password</code> リソースの生成結果を、そのままマスターパスワードにします。</p>
+        <p class="why">パスワードは Terraform の変数にもファイルにも書かず、Terraform 自身に生成させます。ただし tfstate には平文で残るので、state バケットの暗号化・非公開が効いてきます（第 1 章）。</p>
+      </div>
+      <div class="note" data-lines="50-50" data-title="publicly_accessible = false">
+        <p class="what">RDS にパブリック IP を持たせません。</p>
+        <p class="why">private subnet に置いていても、この設定が true だと外向きの経路が開いてしまいます。二重の防御です。</p>
+      </div>
+      <div class="note" data-lines="51-51" data-title="multi_az = false">
+        <p class="what">スタンバイ用のレプリカを、別 AZ に持ちません。</p>
+        <p class="why">network の NAT と同じく、コスト優先で冗長化を見送っています。multi_az にすると、RDS の実行コストがほぼ倍になります。</p>
+      </div>
+      <div class="note" data-lines="53-56" data-title="destroy 前提の 4 つの設定">
+        <p class="what"><code>skip_final_snapshot</code>（destroy 時に最終スナップショットを取らない）、<code>deletion_protection = false</code>（削除保護なし）、<code>backup_retention_period = 0</code>（自動バックアップなし）を、まとめて destroy しやすい方向に倒しています。</p>
+        <p class="why">本番なら逆の値にすべき設定ばかりです。ここは「セッション毎に destroy する学習環境」という前提を、コードで明示しています。データはスキーマを migration、初期データを seed で毎回作り直します。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む③：パスワードは自分で持つ</h3>
+  <p><code>aws_db_instance</code> には <code>manage_master_user_password = true</code> という、AWS 自身に Secrets Manager のシークレットを作らせる近年の定番機能があります。この構成は<b>あえて使いません</b>。</p>
+  <figure class="code" data-file="infra/data/secrets.tf" data-first="1" data-lang="hcl">
+<script type="text/plain"># RDS のマスターパスワードは / @ " スペースを禁止する。
+# デフォルトの override_special にはこれらが含まれ、validate は通るが apply で落ちる。
+resource "random_password" "db" {
+  length           = 32
+  special          = true
+  override_special = "!#$%^&*()-_=+[]{}<>:?"
+}
+
+# manage_master_user_password は使わない。RDS 所有のシークレットは Terraform リソースとして
+# 持てず recovery window を制御できないため、just down のたびに削除待ちシークレットが
+# $0.40/月 ずつ残る恐れがある。自前で持てば recovery_window_in_days = 0 で確実に消える。
+resource "aws_secretsmanager_secret" "db" {
+  name                    = "${var.project_name}/db"
+  description             = "Connection info for the app database. Recreated every session."
+  recovery_window_in_days = 0
+}
+
+# platform 層の app シークレットと違い ignore_changes は付けない。
+# ここは random_password が Terraform 管理下にあり Terraform 側が正なので、
+# ignore_changes を付けるとローテーション後に古いパスワードで固定されてしまう。
+resource "aws_secretsmanager_secret_version" "db" {
+  secret_id = aws_secretsmanager_secret.db.id
+  secret_string = jsonencode({
+    host     = aws_db_instance.app.address
+    port     = aws_db_instance.app.port
+    dbname   = aws_db_instance.app.db_name
+    username = aws_db_instance.app.username
+    password = random_password.db.result
+  })
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="1-7" data-title="override_special で記号を絞る">
+        <p class="what"><code>random_password</code> のデフォルトの特殊記号セットから、RDS が禁止する <code>/</code> <code>@</code> <code>"</code> とスペースを除いた文字集合を、明示的に指定しています。</p>
+        <p class="if"><code>terraform validate</code> はこのミスを検知しません。構文的には正しいパスワードだからです。実際に <code>apply</code> して RDS に渡ったところで初めて失敗します。「validate が通っても安心できない」典型例です。</p>
+      </div>
+      <div class="note" data-lines="9-15" data-title="なぜ manage_master_user_password を使わないか">
+        <p class="what">この機能を使うと、AWS が裏で Secrets Manager のシークレットを作り、Terraform の管理下に入りません。</p>
+        <p class="why">Terraform のリソースとして持てないので、<code>recovery_window_in_days</code> を制御できません。<code>just down</code> のたびに、削除待ちのシークレットが 7 日間 $0.40/月ずつ残り続ける恐れがあります。月 10 セッションなら $4/月 — <b>予算の 4 割が「消したつもりのもの」で消える計算</b>です。</p>
+      </div>
+      <div class="note" data-lines="17-19" data-title="platform 層とは逆に、ignore_changes を付けない">
+        <p class="what">第 2 章の platform 側の app シークレットには <code>ignore_changes = [secret_string]</code> がありましたが、ここには <b>ありません</b>。</p>
+        <p class="why"><code>random_password</code> は Terraform が値を持つリソースです。ここでは Terraform 自身が「正」なので、ignore_changes を付けるとローテーション後も古い値に固定されてしまいます。「誰が値の持ち主か」で、書き方が真逆になる好例です。</p>
+      </div>
+      <div class="note" data-lines="21-30" data-title="RDS の属性から接続情報を組み立てる">
+        <p class="what">host / port / dbname / username / password を、すべて <code>aws_db_instance.app</code> の属性と <code>random_password</code> から組み立てて、1 つの JSON にまとめています。</p>
+        <p class="why">アプリ（api/worker）は、この 1 つのシークレット ARN から Secrets Manager 経由で接続情報一式を取得します。</p>
+      </div>
+    </div>
+  </figure>
+
+  <div class="callout why">
+    <span class="ct">設計判断</span>
+    <p>この構成では、Secrets Manager が 2 本に分かれています（platform の app シークレットと、この db シークレット）。理由は<b>寿命が違う</b>からです。app 用は常時起動層にあり、DB 用は data 層と生死をともにします。実際の SaaS でも、外部 API キーと DB 認証情報は寿命もローテーション頻度も別物です。この構成は、その違いをレイヤー分割でそのまま表現しています。</p>
+  </div>
+
+  <h3>コードを読む④：踏み台 EC2 が要る理由</h3>
+  <p>RDS は private subnet にあり、パブリックアクセスも無効です。ローカルの PC からは直接繋がりません。ではどうやって手元から <code>psql</code> や migration を実行するのでしょうか。</p>
+  <figure class="code" data-file="infra/data/bastion.tf" data-first="30" data-lang="hcl">
+<script type="text/plain"># private subnet に置き、パブリック IP も SSH 鍵も持たない。
+# SSM Agent は NAT Gateway 経由で SSM エンドポイントに接続しに行く（VPC エンドポイントは M9 で比較）。
+resource "aws_instance" "bastion" {
+  ami                         = data.aws_ssm_parameter.bastion_ami.value
+  instance_type               = var.bastion_instance_type
+  subnet_id                   = data.terraform_remote_state.network.outputs.private_subnet_ids[0]
+  vpc_security_group_ids      = [data.terraform_remote_state.network.outputs.bastion_security_group_id]
+  iam_instance_profile        = aws_iam_instance_profile.bastion.name
+  associate_public_ip_address = false
+
+  metadata_options {
+    http_tokens   = "required"
+    http_endpoint = "enabled"
+  }
+
+  root_block_device {
+    volume_size = 8
+    volume_type = "gp3"
+    encrypted   = true
+  }
+
+  tags = {
+    Name = "${var.project_name}-bastion"
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="33-33" data-title="AMI は SSM Parameter Store 参照">
+        <p class="what"><code>data.aws_ssm_parameter.bastion_ami</code>（Amazon Linux 2023 arm64 の最新 AMI を指す SSM パラメータ）を参照します。AMI の ID を直書きしません。</p>
+        <p class="why">AMI ID はリージョンごとに違い、AWS が更新すると変わります。この参照方法なら、常に最新の Amazon Linux 2023 arm64 になります。踏み台は使い捨てなので、AMI が変わっても困りません。</p>
+      </div>
+      <div class="note" data-lines="35-38" data-title="private subnet に置く">
+        <p class="what">踏み台自身も private subnet の中です。パブリック IP を持ちません（<code>associate_public_ip_address = false</code>）。SSH 鍵も持ちません。</p>
+        <p class="why">踏み台といっても、外から入れる「入口」ではありません。SSM Session Manager が、Agent 側から AWS 管理エンドポイントへ<b>接続しに行く</b>方式（アウトバウンドのみ）だからです。</p>
+      </div>
+      <div class="note" data-lines="40-43" data-title="IMDSv2 を強制（http_tokens = required）">
+        <p class="what">インスタンスメタデータサービスへのアクセスに、トークンを要求します（IMDSv1 を許さない）。</p>
+        <p class="why">IMDSv1 は SSRF 経由でメタデータ（一時クレデンシャル含む）を盗まれる既知のリスクがあります。IMDSv2 は、その攻撃を塞ぐ現行の推奨設定です。</p>
+      </div>
+    </div>
+  </figure>
+
+  <div class="callout why">
+    <span class="ct">なぜ ECS Exec でも VPC エンドポイントでもないのか</span>
+    <p><code>AWS-StartPortForwardingSessionToRemoteHost</code>（<code>just db-tunnel</code> の実体）は、<b>SSM 管理下のインスタンスを起点に</b>任意の <code>host:port</code> へフォワードする仕組みです。RDS 自体は SSM 管理ノードになれないので、代わりになるインスタンスが必要です。ECS Exec は interactive command のみに対応し、ポートフォワードには使えません（app 層が実装されても解決しない制約です）。そこで、この専用の踏み台 EC2 を置いています。</p>
+  </div>
+
+  <h4>実際の接続手順</h4>
+  <div class="flow">
+    <div style="flex:1 1 100%"></div>
+  </div>
+  <ol class="flow">
+    <li class="l-data"><b>ターミナル①</b><code>just db-tunnel</code> でトンネルを張りっぱなしにする</li>
+    <li class="arrow">→</li>
+    <li class="l-data"><b>ターミナル②</b><code>just db-migrate</code> / <code>db-seed</code> / <code>db-check</code></li>
+  </ol>
+  <div class="callout warn">
+    <span class="ct">実機検証で分かった注意点（README より）</span>
+    <p><code>just db-url</code> が組み立てる接続文字列は <code>sslmode=no-verify</code> を使います。<code>require</code> だと node-postgres の実装上「証明書検証あり」に解決され、RDS の CA バンドルを取得しない方針の下では、トンネル越しに host が <code>localhost</code> になった瞬間に検証が必ず失敗します。<code>no-verify</code> は TLS を必須のまま証明書検証だけ諦める設定です。<code>psql</code>（<code>just db-psql</code>）は逆に <code>PGSSLMODE=require</code> を使います（<code>no-verify</code> を解さないため）。どちらも<b>経路暗号化のみ担保する</b>落とし所です。</p>
+  </div>
+
+  <h3>確認クイズ</h3>
+
+  <div class="quiz" data-id="ch4-q1" data-kind="選択">
+    <div class="q"><code>manage_master_user_password = true</code> を使わない、いちばんの理由はどれでしょう？</div>
+    <ol hidden>
+      <li>この機能は、PostgreSQL エンジンでは使えないから</li>
+      <li>この機能を使うと、パスワードのローテーションができなくなるから</li>
+      <li data-correct>AWS が所有するシークレットは Terraform のリソースとして持てず recovery window を制御できないため、destroy のたびに削除待ちのシークレットが残り続ける恐れがあるから</li>
+      <li>この機能は追加コストがかかり、Secrets Manager を自前で使うより高くつくから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>削除待ちの 7 日間にも課金され、月 10 セッションなら月 $4 — $10 予算の 4 割が「消したつもりのもの」で消えてしまいます。自前で <code>random_password</code> + <code>aws_secretsmanager_secret</code>（<code>recovery_window_in_days = 0</code>）を持てば、destroy で確実かつ即座に消え、状態が決定的になります。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch4-q2" data-kind="予測">
+    <div class="q"><code>random_password</code> の <code>override_special</code> に、RDS が禁止する記号（<code>/</code> <code>@</code> <code>"</code> スペース）が誤って含まれたまま <code>terraform validate</code> を実行すると、どうなるでしょう？</div>
+    <ol hidden>
+      <li>validate の段階で、構文エラーとして検出される</li>
+      <li data-correct>validate は通り、実際に apply して RDS へ渡ったところで初めて失敗する</li>
+      <li>plan の段階で、警告が表示される</li>
+      <li>Terraform が自動的に禁止文字を除去して apply する</li>
+    </ol>
+    <div class="explain" hidden>
+      <p><code>terraform validate</code> は HCL の構文と型をチェックするだけで、生成された文字列が RDS のパスワードポリシーに合うかまでは見ません。「validate が通っても安心できない」という、この構成の教訓の 1 つです。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch4-q3" data-kind="選択">
+    <div class="q">踏み台 EC2 に、パブリック IP も SSH 鍵も持たせていません。それでもリモートから RDS へポートフォワードできるのはなぜでしょう？</div>
+    <ol hidden>
+      <li>RDS 自体が SSM 管理ノードとして動作しているから</li>
+      <li data-correct>SSM Session Manager は Agent 側（踏み台）から AWS 管理エンドポイントへアウトバウンドで接続しに行く方式で、インバウンドの穴が不要だから</li>
+      <li>VPC エンドポイントが、SSH の代わりにトンネルを提供しているから</li>
+      <li>NAT Gateway が、SSH の代替として機能しているから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>踏み台の SG に ingress ルールは 1 つもありません。egress だけ（443 と、RDS 宛ての 5432）です。SSM Agent が自分から HTTPS で SSM エンドポイントに接続し、そこ経由でセッションが確立されます。RDS 自体は SSM 管理ノードになれないため、踏み台という「起点」が必要です。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch4-q4" data-kind="選択">
+    <div class="q">data 層の <code>db.tf</code>（<code>secrets.tf</code>）で、db シークレットの <code>secret_string</code> に <code>ignore_changes</code> を<b>付けていない</b>理由はどれでしょう？</div>
+    <ol hidden>
+      <li>db シークレットは、変更が発生しない設計だから</li>
+      <li data-correct>random_password が Terraform 管理下にあり、Terraform 自身が値の「正」なので、無視すると古い値のまま固定されてしまうから</li>
+      <li>ignore_changes は、jsonencode を使った secret_string には適用できないから</li>
+      <li>db シークレットは recovery_window_in_days が 0 なので、無視する必要がないから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>platform 層の app シークレット（第 2 章）は、値を CLI/コンソールから外部投入する運用なので <code>ignore_changes</code> が必要でした。db シークレットは逆に、Terraform（<code>random_password</code>）が値の持ち主です。「誰が値を決めているか」で、扱いが正反対になります。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch4-q5" data-kind="予測">
+    <div class="q">network 層を先に destroy してしまった状態で、data 層の <code>terraform plan</code> を実行するとどうなるでしょう？</div>
+    <ol hidden>
+      <li>plan は正常に完了し、apply も問題なく実行できる</li>
+      <li>network 層が自動的に再作成される</li>
+      <li data-correct><code>terraform_remote_state</code> が空の output を返し、plan がわかりにくいエラーで落ちる</li>
+      <li>data 層は network 層に依存していないので、影響を受けない</li>
+    </ol>
+    <div class="explain" hidden>
+      <p><code>terraform_remote_state</code> は「今 tfstate に何が書かれているか」をそのまま返すため、network が destroy 済みだと <code>outputs.private_subnet_ids</code> のような値が存在せず、plan が分かりにくく落ちます。<code>just up</code> が必ず network → data → app → edge の順で、途中を飛ばさず apply するのは、これを避けるためです。</p>
+    </div>
+  </div>
+</section>
+<section class="chapter" id="ch5" data-num="5" data-title="app：ALB と ECS Fargate" data-short="app" data-layer="app" hidden>
+  <header class="ch-head">
+    <p class="eyebrow"><span>CHAPTER 5</span><span class="chip l-app">app</span><span class="life session">セッション毎</span></p>
+    <h2>app：ALB と ECS Fargate</h2>
+    <p class="lead">ALB・ECS クラスタ・api / worker のタスク定義とサービス、CloudWatch Logs、そして 3 種類の IAM ロール。この層は <b>3 つの層すべて（network / platform / data）を参照</b>する、配線の集大成です。</p>
+    <div class="goals">
+      <h4>この章で読み解くこと</h4>
+      <ul>
+        <li>3 つの <code>terraform_remote_state</code> を束ねて、コンテナの環境変数を組み立てる</li>
+        <li>execution role と task role、なぜ 3 本に分けるか</li>
+        <li>CI（deploy-api）とローカル apply が、同じタスク定義を取り合わないための <code>ignore_changes</code></li>
+      </ul>
+    </div>
+  </header>
+
+  <h3>コードを読む①：3 層をまとめて参照する</h3>
+  <figure class="code" data-file="infra/app/data.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">data "aws_caller_identity" "current" {}
+
+data "terraform_remote_state" "network" {
+  backend = "s3"
+
+  config = {
+    bucket = "${var.project_name}-tfstate-${data.aws_caller_identity.current.account_id}"
+    key    = "network/terraform.tfstate"
+    region = var.aws_region
+  }
+}
+
+data "terraform_remote_state" "platform" {
+  backend = "s3"
+
+  config = {
+    bucket = "${var.project_name}-tfstate-${data.aws_caller_identity.current.account_id}"
+    key    = "platform/terraform.tfstate"
+    region = var.aws_region
+  }
+}
+
+data "terraform_remote_state" "data_layer" {
+  backend = "s3"
+
+  config = {
+    bucket = "${var.project_name}-tfstate-${data.aws_caller_identity.current.account_id}"
+    key    = "data/terraform.tfstate"
+    region = var.aws_region
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="3-10" data-title="network から：subnet と SG">
+        <p class="what">ALB の subnet、ECS タスクの subnet と SG、RDS 用 SG（task role の許可の判断材料にはしませんが）などを、この後の <code>alb.tf</code> / <code>ecs.tf</code> で使います。</p>
+      </div>
+      <div class="note" data-lines="13-20" data-title="platform から：ECR / DynamoDB / SQS / Cognito">
+        <p class="what">コンテナイメージの URL、DynamoDB テーブル名、SQS の URL、Cognito の ID。第 2 章で見た output が、ここで初めて「使われる側」として登場します。</p>
+      </div>
+      <div class="note" data-lines="23-30" data-title="data から：DB シークレット">
+        <p class="what">第 4 章で作った <code>db_secret_arn</code> を、api / worker 両方のタスク定義とタスクロールが使います。</p>
+        <p class="why">この層は、他の 3 層すべてに依存する「配線のハブ」です。3 つのうちどれか 1 つでも destroy 済みだと、<code>plan</code> が壊れます（第 4 章のクイズと同じ理由）。<code>terraform_remote_state</code> を使う代わりに層をまたぐ値渡しをしないのは意図的な設計です（第 6 章で edge 層がこの方式を避ける理由も見ます）。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む②：ALB とヘルスチェック</h3>
+  <figure class="code" data-file="infra/app/alb.tf" data-first="9" data-lang="hcl">
+<script type="text/plain">resource "aws_lb_target_group" "api" {
+  name        = "${var.project_name}-api"
+  port        = var.app_port
+  protocol    = "HTTP"
+  vpc_id      = data.terraform_remote_state.network.outputs.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = "/healthz"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 15
+    timeout             = 5
+    matcher             = "200"
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="14-14" data-title="target_type = &quot;ip&quot;">
+        <p class="what">ターゲットを EC2 インスタンスではなく、IP アドレスで登録します。</p>
+        <p class="why">Fargate タスクは EC2 インスタンスではなく、ENI に直接 IP を持ちます。<code>awsvpc</code> ネットワークモードの Fargate では、target_type は <code>ip</code> にする必要があります。</p>
+      </div>
+      <div class="note" data-lines="16-23" data-title="ヘルスチェック：/healthz を見る">
+        <p class="what"><code>apps/api</code> の <code>GET /healthz</code>（認証不要）を、15 秒おきにチェックします。2 回連続成功で healthy、3 回連続失敗で unhealthy に切り替わります。</p>
+        <p class="why">認証必須のエンドポイントをヘルスチェックに使うと、ALB は常に 401 を受け取り、タスクを誤って unhealthy と判定してしまいます。</p>
+      </div>
+    </div>
+  </figure>
+
+  <div class="callout warn">
+    <span class="ct">定番の罠</span>
+    <p><code>apps/api</code> は <code>host: '0.0.0.0'</code> で listen します。<code>localhost</code> 固定だと、ALB のヘルスチェック（コンテナの外から来る）がタスクに届かず、ずっと unhealthy のままになります。README にも「ALB のヘルスチェックが通らない定番の罠」と明記されています。</p>
+  </div>
+
+  <h3>コードを読む③：タスク定義 — 3 層の値を環境変数に流し込む</h3>
+  <figure class="code" data-file="infra/app/ecs.tf" data-first="5" data-lang="hcl">
+<script type="text/plain">resource "aws_ecs_task_definition" "api" {
+  family                   = "${var.project_name}-api"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "512"
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.api_task.arn
+
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+
+  container_definitions = jsonencode([
+    {
+      name      = "api"
+      image     = "${data.terraform_remote_state.platform.outputs.ecr_repository_url}:${var.image_tag}"
+      essential = true
+      portMappings = [
+        { containerPort = var.app_port, protocol = "tcp" }
+      ]
+      environment = [
+        { name = "PORT", value = tostring(var.app_port) },
+        { name = "AWS_REGION", value = var.aws_region },
+        { name = "DB_SECRET_ARN", value = data.terraform_remote_state.data_layer.outputs.db_secret_arn },
+        { name = "ITEMS_TABLE_NAME", value = data.terraform_remote_state.platform.outputs.items_table_name },
+        { name = "ITEMS_QUEUE_URL", value = data.terraform_remote_state.platform.outputs.items_queue_url },
+        { name = "COGNITO_USER_POOL_ID", value = data.terraform_remote_state.platform.outputs.cognito_user_pool_id },
+        { name = "COGNITO_CLIENT_ID", value = data.terraform_remote_state.platform.outputs.cognito_user_pool_client_id },
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.api.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "api"
+        }
+      }
+    }
+  ])
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="11-12" data-title="execution role と task role、2 本を指定">
+        <p class="what">Fargate のタスク定義には、役割の違う 2 つの ARN を指定します。詳しくは次のコードブロックで読みます。</p>
+      </div>
+      <div class="note" data-lines="14-17" data-title="ARM64">
+        <p class="what">タスクの CPU アーキテクチャを ARM64（Graviton）に指定します。</p>
+        <p class="why">Graviton は x86 より安価です。ただし、ビルドするコンテナイメージのアーキテクチャも揃える必要があります（第 7 章の CI/CD で、これが原因の失敗パターンを見ます）。</p>
+      </div>
+      <div class="note" data-lines="22-22" data-title="image と var.image_tag">
+        <p class="what">ECR の URL に、<code>var.image_tag</code>（デフォルト無し）を結合してイメージを指定します。</p>
+        <p class="if">ECR は IMMUTABLE（第 2 章）なので、<code>latest</code> は使えません。apply 時に <code>TF_VAR_image_tag="$(git rev-parse --short HEAD)"</code> のように明示しないと、変数未設定のエラーで止まります。</p>
+      </div>
+      <div class="note" data-lines="27-35" data-title="環境変数に、3 層の output が集まる">
+        <p class="what">この 7 行の環境変数だけで、<code>data_layer</code>（DB シークレット）と <code>platform</code>（テーブル・キュー・Cognito）の値が全部揃います。DB のホスト名やパスワードそのものは<b>渡していません</b>。渡しているのは ARN だけです。</p>
+        <p class="why">実際の接続情報は、コンテナが起動時に Secrets Manager から <code>DB_SECRET_ARN</code> を使って取得します（<code>apps/api/src/main.ts</code>）。環境変数に生の秘匿値を書かないためです。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む④：3 本の IAM ロール — 誰が何をできるか</h3>
+  <figure class="code" data-file="infra/app/iam.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">data "aws_iam_policy_document" "ecs_tasks_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+# execution role は ECR pull / CloudWatch Logs 書き込みのみで、ビジネス権限を含まないため api/worker で共用する。
+resource "aws_iam_role" "execution" {
+  name               = "${var.project_name}-ecs-execution"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "execution" {
+  role       = aws_iam_role.execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="1-9" data-title="ECS タスクが引き受けるロール">
+        <p class="what">「<code>ecs-tasks.amazonaws.com</code> サービスだけが assume できる」という信頼ポリシーです。第 2 章で見た GitHub OIDC の信頼ポリシーと同じ形（<code>AssumeRole</code> 系ステートメント）ですが、principal がサービスか外部 ID プロバイダかが違います。</p>
+      </div>
+      <div class="note" data-lines="12-19" data-title="execution role は共用してよい">
+        <p class="what">AWS のマネージドポリシー（ECR pull・Logs 書き込み）だけを持つロールを、api と worker で<b>共用</b>します。</p>
+        <p class="why">execution role は「コンテナを起動するための」権限（インフラ都合）で、アプリのビジネスロジックの権限を含みません。共用しても、権限が過剰になりません。</p>
+      </div>
+    </div>
+  </figure>
+
+  <figure class="code" data-file="infra/app/iam.tf" data-first="30" data-lang="hcl">
+<script type="text/plain">data "aws_iam_policy_document" "api_task" {
+  statement {
+    sid       = "DynamoDbItems"
+    actions   = ["dynamodb:PutItem", "dynamodb:GetItem"]
+    resources = [data.terraform_remote_state.platform.outputs.items_table_arn]
+  }
+
+  statement {
+    sid       = "SqsSend"
+    actions   = ["sqs:SendMessage"]
+    resources = [data.terraform_remote_state.platform.outputs.items_queue_arn]
+  }
+
+  statement {
+    sid       = "DbSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [data.terraform_remote_state.data_layer.outputs.db_secret_arn]
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="30-46" data-title="api task role：使う API だけを許可">
+        <p class="what">api がやること（<code>createItem</code>: insert + put + send／<code>getItem</code>: select + get）に対応する権限だけを持ちます。<code>PutItem</code> と <code>GetItem</code> はあっても <code>DeleteItem</code> は無く、<code>SendMessage</code> はあっても <code>ReceiveMessage</code> は無い、という非対称さに注目してください。</p>
+        <p class="why">api コンテナが乗っ取られても、できることは「item を作る・読む」までです。worker の仕事（S3 保存、メッセージの受信・削除）はできません。</p>
+      </div>
+    </div>
+  </figure>
+  <p>worker のロール（<code>worker_task</code>）はコードの形は同じですが、権限の中身が逆です：<code>dynamodb:PutItem</code>（status 更新用）、<code>s3:PutObject</code>（スナップショット保存）、<code>sqs:ReceiveMessage</code> / <code>DeleteMessage</code> / <code>GetQueueAttributes</code>（キューの消費）。api と worker、どちらのタスクロールも<b>互いの仕事はできません</b>。</p>
+
+  <div class="callout why">
+    <span class="ct">設計判断</span>
+    <p><b>execution role は共用、task role は api/worker で分離。</b>execution role はインフラの都合（コンテナを起動する権限）で、ビジネス権限を含まないため共用しても安全です。task role はアプリのビジネスロジックの権限そのものなので、最小権限の原則に従い、コンテナごとに分けます。「共用してよい権限」と「分けるべき権限」の境界線が、ロールの分割方針そのものになっています。</p>
+  </div>
+
+  <h3>コードを読む⑤：CI とローカル apply が取り合わないための ignore_changes</h3>
+  <figure class="code" data-file="infra/app/ecs.tf" data-first="48" data-lang="hcl">
+<script type="text/plain">resource "aws_ecs_service" "api" {
+  name            = "${var.project_name}-api"
+  cluster         = aws_ecs_cluster.app.id
+  task_definition = aws_ecs_task_definition.api.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = data.terraform_remote_state.network.outputs.private_subnet_ids
+    security_groups  = [data.terraform_remote_state.network.outputs.ecs_security_group_id]
+    assign_public_ip = false
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.api.arn
+    container_name   = "api"
+    container_port   = var.app_port
+  }
+
+  # deploy-api.yml が新リビジョンを登録して task_definition を差し替えるため、Terraform の state とのずれを無視する。
+  # 新規作成（just up）では image_tag 付きのタスク定義が使われるので影響しない。
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
+  depends_on = [aws_lb_listener.http]
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="67-71" data-title="ignore_changes = [task_definition]">
+        <p class="what">GitHub Actions の deploy-api workflow は、新しいイメージタグでタスク定義の<b>新しいリビジョン</b>を登録し、サービスをそちらに向けます。これは Terraform を経由しない変更です。</p>
+        <p class="why">これが無いと、次に <code>just tf-apply app</code>（や <code>just up</code>）を実行したとき、Terraform は「サービスが state と違うタスク定義を指している」と判断し、<b>デプロイ済みの新しいイメージを、古い state のものに巻き戻して</b>しまいます。</p>
+        <p class="tip">新規作成（<code>just up</code>）は <code>image_tag</code> を明示して apply するので、この設定があっても意図通りに動きます。</p>
+      </div>
+      <div class="note" data-lines="73-73" data-title="depends_on = [aws_lb_listener.http]">
+        <p class="what">ALB のリスナーが先に存在することを、明示的に要求します。</p>
+        <p class="why">サービスの <code>load_balancer</code> ブロックは target group を参照しますが、リスナーは参照していません。リスナーが無い状態でサービスを起動しようとすると、ヘルスチェックの動作が不安定になりえます。属性参照で表現できない順序なので、network 層の NAT Gateway（第 3 章）と同じパターンで <code>depends_on</code> を使っています。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>確認クイズ</h3>
+
+  <div class="quiz" data-id="ch5-q1" data-kind="選択">
+    <div class="q">ALB のヘルスチェックに、認証必須の <code>GET /api/items</code> ではなく <code>GET /healthz</code> を使う理由はどれでしょう？</div>
+    <ol hidden>
+      <li><code>/healthz</code> のほうがレスポンスが軽く、ALB の負荷が下がるから</li>
+      <li data-correct>認証必須のパスだと ALB は毎回 401 を受け取り、タスクを誤って unhealthy と判定してしまうから</li>
+      <li><code>/api/items</code> は POST 専用で、ヘルスチェック（GET）に使えないから</li>
+      <li>Cognito のトークンが無いと、ALB 自体が起動できないから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>ALB はヘルスチェックのために認証トークンを持ちません。認証必須のエンドポイントを使うと、実際にはアプリが正常でも 401 が返り続け、ターゲットが unhealthy 扱いになってタスクが回転し続けます。<code>/healthz</code> は認証不要なので、この問題を避けられます。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch5-q2" data-kind="選択">
+    <div class="q">execution role は api/worker で共用し、task role は分離しています。この違いの根拠はどれでしょう？</div>
+    <ol hidden>
+      <li>execution role のほうが、AWS の仕様上 1 個しか作れないから</li>
+      <li data-correct>execution role はコンテナ起動のためのインフラ都合の権限（ビジネス権限を含まない）で、task role はアプリのビジネスロジックの権限そのものだから</li>
+      <li>task role は無料だが execution role には課金が発生するため、共用してコストを抑えるため</li>
+      <li>共用できるかどうかは、ロール名の命名規則で決まるから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>execution role が持つのは ECR pull・Logs 書き込みという、コンテナを動かすための AWS 管理ポリシーだけです。task role は DynamoDB・SQS・S3・Secrets Manager といった、アプリが実際に触るリソースへの権限で、api と worker では中身がまったく違います（非対称）。だから最小権限のために分離します。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch5-q3" data-kind="予測">
+    <div class="q"><code>aws_ecs_service.api</code> から <code>lifecycle { ignore_changes = [task_definition] }</code> を外すと、何が起きるでしょう？</div>
+    <ol hidden>
+      <li>deploy-api workflow が、タスク定義を登録できなくなる</li>
+      <li>ECS サービスが、常に最新のイメージを自動選択するようになる</li>
+      <li data-correct>deploy-api でデプロイした新しいイメージが、次の terraform apply で state 上の古いタスク定義に巻き戻される</li>
+      <li>Terraform の plan が、常にエラーで失敗するようになる</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>deploy-api workflow は Terraform を介さずに新しいタスク定義リビジョンを登録します。<code>ignore_changes</code> が無いと、Terraform は「state と実際の値が違う」と判断して、次の apply で古い state の値に戻そうとします。これは新しいイメージへのデプロイを台無しにします。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch5-q4" data-kind="選択">
+    <div class="q">api task role に <code>dynamodb:DeleteItem</code> を持たせていないのは、どんな考え方によるものでしょう？</div>
+    <ol hidden>
+      <li>DynamoDB の DeleteItem は、IAM ポリシーで制御できない操作だから</li>
+      <li data-correct>api が実際に行う操作（PutItem・GetItem）だけを許可し、使わない操作は持たせない最小権限の原則を、コード上の非対称な権限として表現しているから</li>
+      <li>DeleteItem は worker のロールにだけ、自動的に付与される仕様だから</li>
+      <li>items テーブルは論理削除方式で、物理削除自体を行わない設計だから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>api がやることは <code>createItem</code>（insert + put + send）と <code>getItem</code>（select + get）だけです。この構成では items の削除機能自体がなく、DeleteItem を許可する理由がありません。「使わない権限は書かない」という最小権限が、api と worker の非対称なポリシーとしてそのままコードに表れています。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch5-q5" data-kind="選択">
+    <div class="q">ECS タスクの CPU アーキテクチャを ARM64 にしています。これに揃える必要があるものはどれでしょう？</div>
+    <ol hidden>
+      <li>RDS のインスタンスクラス</li>
+      <li>NAT Gateway のスループット</li>
+      <li data-correct>Docker イメージのビルド時のプラットフォーム（ECR に push するイメージのアーキテクチャ）</li>
+      <li>Cognito App Client の認証フロー</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>タスク定義が ARM64 を要求するのに、x86 向けにビルドしたイメージを push すると、Fargate は起動時に <code>exec format error</code> で失敗します。この構成では <code>just image-build</code> が <code>--platform linux/arm64</code> でビルドし、CI の publish-image も arm ランナーでネイティブビルドすることで、これを避けています（第 7 章で詳しく扱います）。</p>
+    </div>
+  </div>
+</section>
+<section class="chapter" id="ch6" data-num="6" data-title="edge：2 オリジンの CloudFront" data-short="edge" data-layer="edge" hidden>
+  <header class="ch-head">
+    <p class="eyebrow"><span>CHAPTER 6</span><span class="chip l-edge">edge</span><span class="life always">常時起動</span></p>
+    <h2>edge：2 オリジンの CloudFront</h2>
+    <p class="lead">フロント配信用の非公開 S3 バケットと、OAC（Origin Access Control）付きの CloudFront。この層は「<b>常時起動なのに、一部だけセッション毎の値に依存する</b>」という、この構成でいちばんトリッキーな配線を持ちます。</p>
+    <div class="goals">
+      <h4>この章で読み解くこと</h4>
+      <ul>
+        <li>OAC で「CloudFront からしか読めない S3」を作る仕組み</li>
+        <li><code>dynamic</code> ブロックで、app 層の有無によって構成を切り替える方法</li>
+        <li><code>/api/*</code> ビヘイビアで、キャッシュとヘッダを正しく素通しする設定</li>
+        <li><code>terraform_remote_state</code> を使わず、変数で明示的に渡す設計</li>
+      </ul>
+    </div>
+  </header>
+
+  <h3>コードを読む①：S3 は非公開のまま、CloudFront にだけ読ませる</h3>
+  <figure class="code" data-file="infra/edge/cloudfront.tf" data-first="1" data-lang="hcl">
+<script type="text/plain">resource "aws_cloudfront_origin_access_control" "web" {
+  name                              = "${var.project_name}-web"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# CloudFront（このdistributionからのみ）にGetObjectを許可する。バケット自体は非公開のまま。
+data "aws_iam_policy_document" "web_bucket" {
+  statement {
+    sid       = "AllowCloudFrontServicePrincipal"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.web.arn}/*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.web.arn]
+    }
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="1-6" data-title="OAC（Origin Access Control）">
+        <p class="what">CloudFront が S3 オリジンへのリクエストに SigV4 署名を付けるための設定です。旧来の OAI（Origin Access Identity）の後継で、現行の推奨方式です。</p>
+      </div>
+      <div class="note" data-lines="8-25" data-title="バケットポリシー：この distribution からだけ許可">
+        <p class="what"><code>s3:GetObject</code> を、<code>cloudfront.amazonaws.com</code> サービスプリンシパルに許可します。ただし <code>AWS:SourceArn</code> 条件で、<b>この distribution 自身の ARN</b> に限定します。</p>
+        <p class="why"><code>edge/s3.tf</code> のバケット本体は（第 1 章の tfstate バケットと同じく）4 種類のブロックすべてでパブリックアクセスを遮断しています。それでもコンテンツを配信できるのは、この「CloudFront からだけの特例」を、バケットポリシーで明示的に開けているからです。他の CloudFront ディストリビューションや、S3 の直接 URL からはアクセスできません。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>コードを読む②：SPA の 2 オリジン distribution</h3>
+  <p>この distribution は 1 つのリソースですが、役割の違う部分がいくつも詰まっています。<b>1 つの figure に全体を表示</b>し、行をクリックしながら読み進めます。ALB のオリジンと <code>/api/*</code> のビヘイビアは <code>dynamic</code> ブロックで、<b>app 層が存在するときだけ</b>作られます。<code>for_each</code> に「空の値なら空リスト、値があれば 1 要素のリスト」を渡す、Terraform でよく使うイディオムです。</p>
+  <figure class="code" data-file="infra/edge/cloudfront.tf" data-first="33" data-lang="hcl">
+<script type="text/plain">resource "aws_cloudfront_distribution" "web" {
+  enabled             = true
+  is_ipv6_enabled     = true
+  default_root_object = "index.html"
+  comment             = "${var.project_name} web"
+  price_class         = "PriceClass_200"
+
+  origin {
+    origin_id                = "s3-web"
+    domain_name              = aws_s3_bucket.web.bucket_regional_domain_name
+    origin_access_control_id = aws_cloudfront_origin_access_control.web.id
+  }
+
+  # app層が未apply（var.alb_dns_name空文字）のときは何も作らない。
+  # just up がapp層apply後にこの値付きでedgeを再applyすると、
+  # distributionの「更新」（作成/削除より速い）としてこのブロックが追加される。
+  dynamic "origin" {
+    for_each = var.alb_dns_name != "" ? [var.alb_dns_name] : []
+    content {
+      origin_id   = "alb-api"
+      domain_name = origin.value
+
+      custom_origin_config {
+        http_port              = 80
+        https_port             = 443
+        origin_protocol_policy = "http-only"
+        origin_ssl_protocols   = ["TLSv1.2"]
+      }
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "s3-web"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+  }
+
+  dynamic "ordered_cache_behavior" {
+    for_each = var.alb_dns_name != "" ? [var.alb_dns_name] : []
+    content {
+      path_pattern             = "/api/*"
+      target_origin_id         = "alb-api"
+      viewer_protocol_policy   = "redirect-to-https"
+      allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+      cached_methods           = ["GET", "HEAD"]
+      cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host_header.id
+    }
+  }
+
+  # custom_error_responseはdistribution全体（/api/*も含む）に適用されるため、
+  # 404ルールは追加しない：追加するとAPIの本物の404応答まで200のindex.htmlに
+  # 書き換えてしまう。OAC配下のS3は存在しないオブジェクトに403を返す（404は
+  # 返さない）ため、この403ルールだけでSPAフォールバックは維持できる。
+  custom_error_response {
+    error_code         = 403
+    response_code      = 200
+    response_page_path = "/index.html"
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="38-38" data-title="price_class = PriceClass_200">
+        <p class="what">エッジロケーションを、北米・欧州・アジアなど主要リージョンに絞ります（全世界の <code>PriceClass_All</code> より安い）。</p>
+      </div>
+      <div class="note" data-lines="46-62" data-title="ALB オリジン：app 層があるときだけ作る">
+        <p class="what"><code>for_each</code> が <code>var.alb_dns_name != ""</code> のときだけ 1 要素のリストになり、この <code>origin</code> ブロックが生成されます。中身は <code>origin_protocol_policy = "http-only"</code>。CloudFront から ALB へは HTTP（平文）で接続します。</p>
+        <p class="why">CloudFront が HTTPS を終端し（第 0 章の mixed content 対策）、CloudFront → ALB の区間は AWS のバックボーン内なので HTTP でよい、という判断です。ALB に ACM 証明書を用意する必要がありません。</p>
+      </div>
+      <div class="note" data-lines="64-70" data-title="既定のビヘイビア：S3 をキャッシュ優先で配信">
+        <p class="what">GET/HEAD だけを許可し、マネージドポリシー <code>CachingOptimized</code> を使います。ビルド成果物（JS/CSS/HTML）はブラウザキャッシュに任せる、標準的な設定です。</p>
+      </div>
+      <div class="note" data-lines="72-83" data-title="/api/* ビヘイビア：CachingDisabled + AllViewerExceptHostHeader">
+        <p class="what">こちらも <code>dynamic</code> ブロックで、app 層があるときだけ生成されます。キャッシュポリシーは <code>CachingDisabled</code>（一切キャッシュしない）、オリジンリクエストポリシーは <code>AllViewerExceptHostHeader</code>（<code>Host</code> ヘッダ以外を全部素通し）です。</p>
+        <p class="why">CloudFront の<b>デフォルトのビヘイビア</b>は、ヘッダをほとんど転送せず、レスポンスをキャッシュします。そのままだと <code>Authorization</code> ヘッダが CloudFront で落とされ、JWT が Fastify に届かず<b>全部 401</b> になります。しかもこれは「アプリのバグ」に見えてしまいます。この構成の README が「CloudFront を API の前に置くときの最頻出の失敗」と呼ぶのがこれです。</p>
+        <p class="tip"><code>Host</code> ヘッダだけ除外するのは、素通しすると ALB が「CloudFront のドメイン名」を Host として受け取り、ルーティングが混乱するためです。</p>
+      </div>
+      <div class="note" data-lines="85-93" data-title="403 だけを index.html にフォールバックさせる">
+        <p class="what">SPA ルーティング対応のため、404 相当のケースを <code>index.html</code>（200 応答）に読み替えます。ただし <code>error_code</code> に指定しているのは<b>403</b> です。</p>
+        <p class="why"><code>custom_error_response</code> は distribution 全体（<code>/api/*</code> も含む）に効きます。404 をルールに含めると、<b>API が返す本物の 404 まで</b> 200 の index.html に書き換えられてしまいます。OAC 配下の非公開 S3 は、存在しないオブジェクトに 404 ではなく 403 を返す仕様なので、403 だけをルールにすれば、S3 側の「ページが無い」ケースだけを拾えます。</p>
+        <p class="tip">この作りを理解していないと、「なぜ 404 ではなく 403 なのか」がバグに見えます。コメントに理由が明記されているのは、まさにこの罠のためです。</p>
+      </div>
+      <div class="note" data-lines="101-103" data-title="viewer_certificate：*.cloudfront.net の既定証明書">
+        <p class="what">独自ドメインを持たないので、CloudFront 既定のドメイン用証明書をそのまま使います。</p>
+        <p class="why">これが第 0 章で見た「独自ドメインが無くても HTTPS になる」からくりです。ACM の証明書発行やドメイン検証が一切不要です。</p>
+      </div>
+    </div>
+  </figure>
+
+  <div class="callout why">
+    <span class="ct">設計判断：terraform_remote_state を使わない</span>
+    <p>edge 層は app 層の ALB の DNS 名を必要としますが、<code>terraform_remote_state</code> では読みません。<code>var.alb_dns_name</code>（デフォルト空文字）として<b>明示的に受け取ります</b>。理由は、destroy 済みの層に対して <code>terraform_remote_state</code> が空の output を返し、plan がわかりにくく落ちる問題を、この層では抱えたくないからです。edge は常時起動なので、app 層が無い状態（セッション終了後）でも <code>plan</code>／<code>apply</code> が成立しなければなりません。「app 層が無いのはエラーではなく通常状態」という前提を、変数のデフォルト値で表現しています。</p>
+  </div>
+
+  <h3>コードを読む③：CloudFront の「更新」を速く保つ運用</h3>
+  <p>CloudFront の distribution 作成・削除は「disable → 伝播待ち → 削除」と進み、時間がかかります（第 0 章）。だから edge 層は<b>作り直さず、既存の distribution を再 apply で更新</b>する運用にしています。</p>
+  <figure class="code" data-file="justfile" data-first="15" data-lang="just">
+<script type="text/plain">up:
+    cd infra/network && terraform apply
+    cd infra/data && terraform apply
+    cd infra/app && terraform apply
+    cd infra/edge && terraform apply -var="alb_dns_name=$(cd ../app && terraform output -raw alb_dns_name)"</script>
+    <div class="notes">
+      <div class="note" data-lines="15-19" data-title="up：app apply の後に、edge を alb_dns_name 付きで再 apply">
+        <p class="what">network → data → app の順で apply した後、最後に edge を<b>もう一度</b> apply します。今度は <code>var.alb_dns_name</code> に、app 層の output（ALB の DNS 名）を渡します。</p>
+        <p class="why">これで <code>dynamic</code> ブロックの条件が真になり、<code>/api/*</code> のオリジンとビヘイビアが distribution に<b>追加</b>されます。これは新規作成ではなく<b>更新</b>なので、実機検証では約 50 秒で完了しました（初回作成は約 3 分弱）。</p>
+      </div>
+    </div>
+  </figure>
+
+  <div class="callout warn">
+    <span class="ct">down の順序が逆向きに重要な理由</span>
+    <p><code>just down</code> は、app を destroy する<b>前に</b> edge を <code>alb_dns_name=""</code> で再 apply します。もしこの順序を守らず、先に app を壊すと、distribution は死んだ ALB の DNS 名を指したまま残り、<b>次のセッションで edge を再 apply するまで</b> <code>/api/*</code> が 502 を返し続けます。実際に M7 では、この「edge 再 apply」の行に <code>cd infra/edge</code> 後の <code>$(cd infra/app && ...)</code> が相対パスとして誤解決され、<code>alb_dns_name</code> が常に空文字になるバグがありました（<code>$(cd ../app && ...)</code> に修正済み）。</p>
+  </div>
+
+  <h3>コードを読む④：deploy-web ロール — platform の OIDC provider を data source で引く</h3>
+  <figure class="code" data-file="infra/edge/iam.tf" data-first="1" data-lang="hcl">
+<script type="text/plain"># platform 層が作った GitHub OIDC provider を URL で引く（terraform_remote_state は増やさない）。
+# provider が無いと plan が失敗するので、apply 順は platform → edge。
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
+}</script>
+    <div class="notes">
+      <div class="note" data-lines="1-5" data-title="URL で data source として引く">
+        <p class="what">platform 層が作った OIDC provider（第 2 章）を、ARN の受け渡しではなく、<b>URL による data source 参照</b>で見つけます。</p>
+        <p class="why">ここでも <code>terraform_remote_state</code> は使いません。OIDC provider はアカウントに 1 つしかない共有リソースなので、URL さえ分かれば一意に特定できます。わざわざ platform 層の tfstate 全体を読む必要がありません。</p>
+        <p class="if">platform 層がまだ OIDC provider を作っていない状態で edge を apply すると、この data source が見つからずに plan が失敗します。だから「常時起動層どうしの apply 順は platform → edge」です。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>確認クイズ</h3>
+
+  <div class="quiz" data-id="ch6-q1" data-kind="選択">
+    <div class="q"><code>custom_error_response</code> の対象を 404 ではなく 403 にしているのはなぜでしょう？</div>
+    <ol hidden>
+      <li>CloudFront は 404 エラーコードを custom_error_response の対象にできない仕様だから</li>
+      <li data-correct>404 を対象にすると API の本物の 404 応答まで index.html に書き換えられてしまい、OAC 配下の S3 は存在しないオブジェクトに 403 を返すので 403 だけで SPA フォールバックが成立するから</li>
+      <li>403 のほうが 404 よりレスポンスが速いから</li>
+      <li>S3 バケットが非公開なので、404 を返す権限が無いから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p><code>custom_error_response</code> は distribution 全体、つまり <code>/api/*</code> も含めて効きます。404 をルールにすると API の「本当に無い」404 まで巻き込まれます。OAC 配下の非公開 S3 が存在しないオブジェクトに 403 を返す挙動を利用して、S3 側のケースだけを 403 で拾っています。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch6-q2" data-kind="予測">
+    <div class="q"><code>/api/*</code> のオリジンリクエストポリシーを、既定の（何も指定しない）ままにすると何が起きるでしょう？</div>
+    <ol hidden>
+      <li>ALB への接続そのものが確立できなくなる</li>
+      <li data-correct><code>Authorization</code> ヘッダが転送されず、Cognito の JWT が Fastify に届かないため、リクエストがすべて 401 になる</li>
+      <li>CloudFront のキャッシュが効きすぎて、常に古いレスポンスが返る</li>
+      <li>ALB のヘルスチェックが失敗し、ターゲットが unhealthy になる</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>CloudFront のデフォルトのビヘイビアはヘッダをほとんど転送しません。この構成では <code>AllViewerExceptHostHeader</code> を明示することで <code>Authorization</code> を含むほぼ全ヘッダを素通しし、この問題を避けています。README が「CloudFront を API の前に置くときの最頻出の失敗」と呼ぶ問題です。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch6-q3" data-kind="選択">
+    <div class="q">edge 層が ALB の DNS 名を <code>terraform_remote_state</code> ではなく <code>var.alb_dns_name</code>（デフォルト空文字）で受け取る理由はどれでしょう？</div>
+    <ol hidden>
+      <li>edge 層は VPC の外にあるため、remote_state の仕組みを使えないから</li>
+      <li data-correct>app 層が destroy 済み（＝ output が無い）のが edge 層にとって通常の状態であり、remote_state だとその場合に plan が分かりにくく落ちるから</li>
+      <li>ALB の DNS 名は、apply のたびに値が変わらないため、変数で十分だから</li>
+      <li>edge 層は app 層より先に apply されるため、参照できる output がまだ存在しないから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>edge は常時起動層なので、app 層が存在しない期間のほうが長いことも普通です。<code>terraform_remote_state</code> は destroy 済みの層に対して空の output を返し plan を壊すので、edge 層はこれを避けて、明示的な変数（デフォルト空文字）で受け取ります。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch6-q4" data-kind="予測">
+    <div class="q"><code>just down</code> で、edge の再 apply（<code>alb_dns_name=""</code>）を省略し、いきなり app を destroy するとどうなるでしょう？</div>
+    <ol hidden>
+      <li>edge の distribution が自動的に無効化される</li>
+      <li>edge 層の terraform state が壊れ、次回 apply が失敗する</li>
+      <li data-correct>distribution が死んだ ALB の DNS 名を指したまま残り、次のセッションで edge を再 apply するまで /api/* が 502 を返し続ける</li>
+      <li>app の destroy 自体が、依存関係のエラーで失敗する</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>edge は app 層に直接依存する Terraform 上の参照を持たないので（変数渡しのため）、app の destroy 自体はエラーになりません。しかし CloudFront の設定は古い ALB の DNS 名を指したまま残るため、フロントから見ると /api/* が壊れたように見えます。これが <code>just down</code> が edge の再 apply を先に行う理由です。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch6-q5" data-kind="選択">
+    <div class="q">CloudFront から ALB への接続に <code>origin_protocol_policy = "http-only"</code>（HTTP・平文）を使っても許容できる理由はどれでしょう？</div>
+    <ol hidden>
+      <li>ALB は HTTPS リスナーを持てない仕様だから</li>
+      <li data-correct>ブラウザ〜CloudFront 間は CloudFront が HTTPS を終端しており、CloudFront〜ALB 間は AWS のバックボーン内の通信だから</li>
+      <li>この構成では、ALB へのリクエストに認証情報を含まないから</li>
+      <li>CloudFront は HTTP でしかオリジンに接続できない仕様だから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>mixed content 問題（HTTPS のページから HTTP は呼べない）は、あくまでブラウザ側の制約です。CloudFront が終端としてブラウザには常に HTTPS で応答するので、CloudFront から先（ALB まで）は AWS 内部の通信として HTTP で構いません。ALB に ACM 証明書を用意する手間も省けます。</p>
+    </div>
+  </div>
+</section>
+<section class="chapter" id="ch7" data-num="7" data-title="層をまたぐ運用：up/down と CI/CD" data-short="運用" hidden>
+  <header class="ch-head">
+    <p class="eyebrow"><span>CHAPTER 7</span><span class="chip">justfile ＋ .github/workflows</span></p>
+    <h2>層をまたぐ運用：up/down と CI/CD</h2>
+    <p class="lead">6 層それぞれのコードを読み終えました。最後は、それらを<b>束ねて動かす</b>部分です。<code>just up</code>／<code>just down</code> の順序、消し残しの検出、そして「CI/CD の粒度がインフラのライフサイクルに従う」という、この構成ならではの CI/CD 設計を読みます。</p>
+    <div class="goals">
+      <h4>この章で読み解くこと</h4>
+      <ul>
+        <li><code>just up</code>／<code>down</code> が、なぜこの順序でなければならないか</li>
+        <li>「イメージの発行」と「ECS への反映」を、なぜ別の workflow に分けるか</li>
+        <li>CI が AWS に一切触らない設計と、tag push を締め出す多層防御</li>
+      </ul>
+    </div>
+  </header>
+
+  <h3>コードを読む①：up と down は、互いに逆順</h3>
+  <figure class="code" data-file="justfile" data-first="15" data-lang="just">
+<script type="text/plain">up:
+    cd infra/network && terraform apply
+    cd infra/data && terraform apply
+    cd infra/app && terraform apply
+    cd infra/edge && terraform apply -var="alb_dns_name=$(cd ../app && terraform output -raw alb_dns_name)"
+
+# app を destroy する前に edge を alb_dns_name 空で再 apply し、502 の残骸を防いでから
+# app → data → network の逆順で destroy する
+[confirm('本当に app/data/network を destroy しますか？ (RDS のデータは失われます)')]
+down:
+    cd infra/edge && terraform apply -var="alb_dns_name="
+    cd infra/app && terraform destroy
+    cd infra/data && terraform destroy
+    cd infra/network && terraform destroy</script>
+    <div class="notes">
+      <div class="note" data-lines="15-19" data-title="up：network → data → app → edge">
+        <p class="what">依存の向きどおりに apply します。data は network を参照し（第 4 章）、app は network / platform / data を参照し（第 5 章）、edge は最後に app の ALB DNS 名を受け取って再 apply されます（第 6 章）。</p>
+        <p class="why"><code>terraform_remote_state</code> は、参照先がまだ無いと分かりにくいエラーで落ちます。依存の向きに沿って積み上げれば、常に「参照先はもう存在する」状態を保てます。</p>
+      </div>
+      <div class="note" data-lines="21-28" data-title="down：edge 再 apply → app → data → network">
+        <p class="what">destroy はほぼ逆順（app → data → network）ですが、<b>先頭に edge の再 apply</b>が入ります。</p>
+        <p class="why">第 6 章で見たとおり、app を先に壊すと CloudFront が死んだ ALB を指したまま残ります。だから、destroy の前に edge 側の参照を空にしておきます。</p>
+      </div>
+      <div class="note" data-lines="23-23" data-title="[confirm(...)]">
+        <p class="what">実行前に確認プロンプトを挟む just の属性です。RDS のデータが失われることを、コマンド名から明示しています。</p>
+        <p class="why">破壊的なレシピにだけ付ける約束です（justfile 全体の方針。第 0 章の justfile 説明を参照）。</p>
+      </div>
+    </div>
+  </figure>
+
+  <div class="callout warn">
+    <span class="ct">この順序が崩れると何が起きるか（各章の再確認）</span>
+    <ul>
+      <li><b>data の前に network を壊す</b> → 第 3 章：<code>DependencyViolation</code> で失敗し、NAT Gateway と EIP が残って課金が続く</li>
+      <li><b>app 層の apply 前に data 層の migration を忘れる</b> → 第 5 章の周辺で触れたとおり <code>relation "items" does not exist</code> で 500 になる</li>
+      <li><b>edge の再 apply を飛ばして app を壊す</b> → 第 6 章：<code>/api/*</code> が次のセッションまで 502 のまま</li>
+    </ul>
+  </div>
+
+  <h3>コードを読む②：消し残しを機械的に確認する</h3>
+  <figure class="code" data-file="justfile" data-first="240" data-lang="just">
+<script type="text/plain">leaks:
+    aws ec2 describe-nat-gateways --filter Name=state,Values=available
+    aws ec2 describe-instances --filters Name=instance-state-name,Values=running,pending,stopping,stopped
+    aws ec2 describe-addresses
+    aws elbv2 describe-load-balancers
+    aws rds describe-db-instances
+    aws secretsmanager list-secrets --include-planned-deletion</script>
+    <div class="notes">
+      <div class="note" data-lines="240-246" data-title="このリストは、章で見た「高コストな残骸」そのもの">
+        <p class="what">NAT Gateway・EC2（踏み台含む）・Elastic IP・ALB・RDS・削除待ちシークレット。ここまでの章で読んだ「セッション毎に destroy すべきもの」「消し忘れると課金され続けるもの」が、そのままチェック項目になっています。</p>
+        <p class="why"><code>--include-planned-deletion</code> は、削除予定（recovery window 中）のシークレットも表示します。第 4 章で見た「manage_master_user_password を使わない理由」が、まさにこのコマンドで検出したい対象です。</p>
+        <p class="tip"><code>just down</code> の直後に必ずこれを実行する運用です。全部が空リストなら、消し残しはありません。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>CI/CD の設計：責務を、依存する層のライフサイクルで分ける</h3>
+  <p>一般的な「push したら ECS にデプロイ」のチュートリアルは、<b>ECS サービスが常時存在する</b>前提で書かれています。この構成では app 層はセッション後に destroy 済みなのが普通なので、そのまま真似すると壊れます。そこで CI（検証）と CD（発行・反映）を分け、CD はさらに「何に依存するか」で 3 つに分けます。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>workflow</th><th>責務</th><th>トリガー</th><th>依存する層</th></tr></thead>
+    <tbody>
+      <tr><td><code>ci.yml</code></td><td>検証のみ（typecheck / test / lint / terraform validate / docker build）。AWS に触らない</td><td>全ブランチの push（tag は除く）</td><td>なし</td></tr>
+      <tr><td><code>publish-image.yml</code></td><td>api/worker イメージを 7 桁 SHA タグで ECR に発行</td><td>main の CI 成功後</td><td><span class="chip l-platform">platform</span>（常時）</td></tr>
+      <tr><td><code>deploy-web.yml</code></td><td>apps/web を S3 に同期、CloudFront invalidate</td><td>main の CI 成功後</td><td><span class="chip l-edge">edge</span>（常時）</td></tr>
+      <tr><td><code>deploy-api.yml</code></td><td>発行済みイメージを ECS の api/worker に反映</td><td>手動（workflow_dispatch）</td><td><span class="chip l-app">app</span>（セッション毎）</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="callout why">
+    <span class="ct">設計判断：なぜ「発行」と「反映」を分けるか</span>
+    <p><code>publish-image</code> は platform 層（常時存在）にしか依存しないので、main への push で<b>自動</b>にできます。<code>deploy-api</code> は app 層（セッション毎、毎回 destroy）に依存するので、自動にすると「app が無いのに update-service しようとして毎回失敗する」workflow になってしまいます。「イメージを発行する」と「動いている ECS に反映する」は、この構成では<b>別の関心事</b>です。deploy-api を手動にすれば、ロールバックも「発行済みの別の SHA を選んで実行する」だけの、同じ操作で済みます。</p>
+  </div>
+
+  <h3>コードを読む③：main だけを CI/CD に晒す多層防御</h3>
+  <p>第 2 章で、GitHub OIDC の信頼ポリシーが <code>sub</code> を <code>...:ref:refs/heads/main</code> に固定していることを見ました。ですが、それだけでは塞ぎきれない抜け道が 1 つあります。</p>
+  <div class="callout warn">
+    <span class="ct">tag push という抜け道</span>
+    <p><code>workflow_run</code> は、起動元の workflow が動いた<b>ブランチ名</b>（<code>head_branch</code>）を見て発火します。もし <code>ci.yml</code> が tag の push でも動くなら、<b>「main」という名前の tag</b>を未レビューのコミットに push されると、CI が通った後に <code>workflow_run</code> の <code>branches: [main]</code> フィルタを<b>すり抜けて</b> OIDC ロールに到達できてしまいます。</p>
+  </div>
+  <p>この構成は、3 段の多層防御で塞いでいます。</p>
+  <ol class="flow">
+    <li><b>① ci.yml</b><code>on.push.branches: ['**']</code> — tag の push そのものでは CI を動かさない</li>
+    <li class="arrow">→</li>
+    <li><b>② CD 側の if</b><code>workflow_run.event == 'push'</code> かつ <code>head_repository.full_name == github.repository</code></li>
+    <li class="arrow">→</li>
+    <li><b>③ OIDC の sub 条件</b><code>...:ref:refs/heads/main</code>（第 2 章）</li>
+  </ol>
+  <div class="callout why">
+    <span class="ct">なぜ 1 つで十分だと考えないのか</span>
+    <p>①だけでも防げますが、CI 側の設定ミス 1 つで③まで全部意味を失うのを避けるため、CD 側にも②の <code>if</code> を重ねています。「push で起動した、このリポジトリ自身の CI だけ」を条件にすることで、fork からの <code>workflow_run</code> 悪用（別リポジトリの CI 成功を騙る）も同時に防ぎます。多層防御は、どれか 1 つが破られても他が残る設計です。</p>
+  </div>
+
+  <h3>コードを読む④：ARM64 を、ビルドの入口から揃える</h3>
+  <p>第 5 章で、ECS タスクが ARM64（Graviton）であることを見ました。イメージ側もこれに揃えないと <code>exec format error</code> になります。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>workflow</th><th>ランナー</th><th>理由</th></tr></thead>
+    <tbody>
+      <tr><td><code>ci.yml</code> / <code>publish-image.yml</code></td><td><code>ubuntu-24.04-arm</code></td><td>ECS タスクが ARM64 なので、<code>docker build</code> も発行も arm ランナーでネイティブビルドする</td></tr>
+      <tr><td><code>deploy-web.yml</code> / <code>deploy-api.yml</code></td><td><code>ubuntu-latest</code></td><td>アーキテクチャに依存しない作業（S3 同期・ECS API 呼び出し）のため</td></tr>
+    </tbody>
+  </table></div>
+  <p>ローカルの <code>just image-build</code> も <code>docker build --platform linux/arm64</code> で固定し、開発機のアーキテクチャに関わらず arm64 のイメージを作ります。CI とローカルの両方で、同じ判断を揃えているのがポイントです。</p>
+
+  <h3>値の受け渡し：GitHub Variables 経由、tfstate には触らせない</h3>
+  <p>CI は tfstate を読みません。各層の値は、あらかじめ <code>just gh-vars</code> で GitHub Actions の <b>Variables</b>（非秘匿）に登録しておきます。</p>
+  <figure class="code" data-file="justfile" data-first="256" data-lang="just">
+<script type="text/plain">gh-vars:
+    set -eu; \
+    publish_role="$(cd infra/platform && terraform output -raw github_publish_role_arn)"; \
+    deploy_api_role="$(cd infra/platform && terraform output -raw github_deploy_api_role_arn)"; \
+    ecr_url="$(cd infra/platform && terraform output -raw ecr_repository_url)"; \
+    cognito_client_id="$(cd infra/platform && terraform output -raw cognito_user_pool_client_id)"; \
+    deploy_web_role="$(cd infra/edge && terraform output -raw github_deploy_web_role_arn)"; \
+    web_bucket="$(cd infra/edge && terraform output -raw web_bucket)"; \
+    distribution_id="$(cd infra/edge && terraform output -raw cloudfront_distribution_id)"; \
+    gh variable set AWS_ROLE_ARN_PUBLISH --body "$publish_role"; \
+    gh variable set AWS_ROLE_ARN_DEPLOY_API --body "$deploy_api_role"; \
+    gh variable set ECR_REPOSITORY_URL --body "$ecr_url"; \
+    gh variable set COGNITO_CLIENT_ID --body "$cognito_client_id"; \
+    gh variable set AWS_ROLE_ARN_DEPLOY_WEB --body "$deploy_web_role"; \
+    gh variable set WEB_BUCKET --body "$web_bucket"; \
+    gh variable set CLOUDFRONT_DISTRIBUTION_ID --body "$distribution_id"</script>
+    <div class="notes">
+      <div class="note" data-lines="257-257" data-title="set -eu">
+        <p class="what">未定義変数の参照や、途中のコマンド失敗で即座にスクリプトを止めます。</p>
+        <p class="why">これが無いと、たとえば <code>terraform output</code> が失敗しても空文字のまま後続に進み、<b>空の値を GitHub Variables に登録してしまう</b>おそれがあります。他の justfile レシピ（<code>image-push</code> など）にも同様に <code>set -eu</code> が付いています。</p>
+      </div>
+      <div class="note" data-lines="258-264" data-title="先に全部取得してから、まとめて登録する">
+        <p class="what">7 つの値をすべて変数に取り込んでから、<code>gh variable set</code> を 7 回実行します。値の取得と登録を、行ごとに交互にしていません。</p>
+        <p class="why">どれか 1 つの <code>terraform output</code> が失敗すれば、<code>set -eu</code> によってこの時点で止まり、<b>1 つも登録されません</b>。「一部だけ古い値のまま」という中途半端な状態を避けています。</p>
+      </div>
+      <div class="note" data-lines="265-271" data-title="登録対象は、すべて常時起動層の値">
+        <p class="what">7 つとも platform か edge の output です。network / data / app の値はここに出てきません。</p>
+        <p class="why">セッションをまたいで変わらない値だけを登録するので、<code>gh-vars</code> はロールやバケットを作り直したときだけ再実行すればよく、セッションのたびに実行する必要がありません。</p>
+      </div>
+    </div>
+  </figure>
+
+  <h3>クリックで辿る全体図（再掲）</h3>
+  <p>最後に、第 0 章の図をもう一度使って、CI/CD の 3 つの経路（publish-image / deploy-web / deploy-api）がどの層のどのロールを通るかを確認してみましょう。「ライフサイクル」モードに切り替えると、常時起動と セッション毎の境界がどこにあるかが一目で分かります。</p>
+  <div class="diagram" id="archDiagram2" aria-label="CI/CDの経路を含むアーキテクチャ図"></div>
+
+  <h3>確認クイズ</h3>
+
+  <div class="quiz" data-id="ch7-q1" data-kind="選択">
+    <div class="q">「イメージの発行」（publish-image）は自動、「ECS への反映」（deploy-api）は手動にしています。この違いの根拠はどれでしょう？</div>
+    <ol hidden>
+      <li>ECR への書き込みは無料だが、ECS の更新には追加コストがかかるから</li>
+      <li data-correct>publish-image は常時起動の platform 層にしか依存しないが、deploy-api はセッション毎に destroy される app 層に依存するため、自動化すると app が無い状態で毎回失敗するから</li>
+      <li>deploy-api のほうが、実行時間が長くタイムアウトしやすいから</li>
+      <li>ECS へのデプロイは、GitHub Actions の無料枠では実行できないから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>「push したら ECS にデプロイ」という一般的なパターンは、ECS サービスが常時存在する前提です。この構成の app 層はセッション毎に destroy されるので、そのまま自動化すると app が無いときに必ず失敗します。CD の粒度を、依存する層のライフサイクルに合わせて分けています。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch7-q2" data-kind="予測">
+    <div class="q"><code>ci.yml</code> が tag の push でも動くように設定されていたら、悪意ある push でどんな抜け道が生まれるでしょう？</div>
+    <ol hidden>
+      <li>ECR に直接、認証なしでイメージを push できてしまう</li>
+      <li data-correct>「main」という名前の tag を未レビューのコミットに push すると、CI 成功後に workflow_run の branches フィルタをすり抜けて CD ロールに到達しうる</li>
+      <li>OIDC の sub 条件が、tag の push では検証されなくなる</li>
+      <li>RDS のマスターパスワードが、tag のログに出力されてしまう</li>
+    </ol>
+    <div class="explain" hidden>
+      <p><code>workflow_run</code> は起動元の head_branch を見ますが、tag push では tag 名がそこに入ります。「main」という名前の tag なら <code>branches: [main]</code> をすり抜けられます。これを防ぐため、<code>ci.yml</code> 自体を tag push で動かさないようにし、CD 側にも <code>event == 'push'</code> と <code>head_repository</code> の一致確認を重ねています。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch7-q3" data-kind="選択">
+    <div class="q"><code>just gh-vars</code> が、7 つの値を全部取得してから、まとめて <code>gh variable set</code> するのはなぜでしょう？</div>
+    <ol hidden>
+      <li>GitHub API のレート制限を避けるため</li>
+      <li data-correct>途中の terraform output が 1 つでも失敗したときに、一部だけ古い値のまま登録される中途半端な状態を避けるため</li>
+      <li>gh variable set は、複数の値をまとめて渡す形式でしか呼び出せないから</li>
+      <li>Variables には、一度に 7 個までしか登録できない制限があるから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p><code>set -eu</code> と組み合わせることで、どれか 1 つの output 取得が失敗した時点でスクリプト全体が止まり、<b>1 つも登録されません</b>。行ごとに取得と登録を交互にしていたら、途中で失敗したときに「一部だけ新しい値、残りは古いまま」という状態になりえます。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch7-q4" data-kind="予測">
+    <div class="q">x86 の GitHub ランナーで <code>docker build</code>（プラットフォーム指定なし）したイメージを、そのまま ECS（ARM64 タスク定義）で動かすとどうなるでしょう？</div>
+    <ol hidden>
+      <li>ECS が自動的にアーキテクチャを変換して実行する</li>
+      <li>ECR への push の時点でエラーになる</li>
+      <li data-correct>タスクの起動時に exec format error で失敗する</li>
+      <li>動作は遅くなるが、正常に起動する</li>
+    </ol>
+    <div class="explain" hidden>
+      <p>ECR は任意のアーキテクチャのイメージを push・保存できるので、push 自体は成功します。しかし ECS の ARM64 タスクが x86 向けバイナリを実行しようとすると、exec format error で起動に失敗します。この構成では arm ランナーでのネイティブビルドと <code>--platform linux/arm64</code> の明示で、これを防いでいます。</p>
+    </div>
+  </div>
+
+  <div class="quiz" data-id="ch7-q5" data-kind="選択">
+    <div class="q"><code>just leaks</code> が確認する項目に、DynamoDB や SQS が含まれていないのはなぜでしょう？</div>
+    <ol hidden>
+      <li>DynamoDB・SQS には、消し残しという概念自体が存在しないから</li>
+      <li data-correct>これらは常時起動の platform 層にあり、そもそも destroy 対象ではないため、「消し残し」を心配する必要がないから</li>
+      <li>AWS CLI に、これらのリソースを一覧するコマンドが存在しないから</li>
+      <li>DynamoDB と SQS は、無料利用枠の対象で課金されないから</li>
+    </ol>
+    <div class="explain" hidden>
+      <p><code>just leaks</code> がチェックしているのは、NAT Gateway・EC2・EIP・ALB・RDS・削除待ちシークレットという、<b>セッション毎に destroy されるはずのもの</b>です。DynamoDB や SQS は platform 層にあり、常時存在しているのが正しい状態なので、チェック対象になりません。</p>
+    </div>
+  </div>
+
+  <div class="callout try">
+    <span class="ct">最後に：この教科書の元になったコード</span>
+    <p>お疲れさまでした。ここまでの 6 層すべてを、実際にコマンドで動かしながら復習することもできます（課金が発生する操作にはコスト目安を添えています）。</p>
+    <pre>just --list          # 全レシピの索引
+just tf-plan platform  # 課金なし。常時起動層の構成を覗く
+just up                # 課金あり。network→data→app→edgeを一括apply
+just down              # 課金あり。逆順でdestroyし、edgeの参照も掃除する
+just leaks             # down後に必ず。消し残しがあれば一覧に出る</pre>
+  </div>
+</section>
+  </div>
+  </main>
+</div>
+<script>
+/* ------------------------------------------------------------------
+   アーキテクチャ図のデータ定義。
+   viewBox は 0 0 1010 530。座標はグリッド配置（列 C0-C4 / 行 R0-R4）。
+   VPC の破線バンドは VPC_NODE_IDS の bbox から自動計算する（renderer 側）。
+------------------------------------------------------------------- */
+const ARCH_NODES = [
+  // ---- bootstrap ----
+  { id:"tfstate", layer:"bootstrap", life:"once",   x:20,  y:60,  w:200, h:56, label:"tfstate バケット", sub:"local stateで一度だけ作成",
+    ch:"ch1", detail:"他の全5層がS3 backendとして共有する。versioning・SSE-S3・公開ブロック・prevent_destroyで守る。" },
+
+  // ---- edge / platform（常時起動） ----
+  { id:"s3web",   layer:"edge",     life:"always", x:20,  y:158, w:200, h:56, label:"S3 (web)",        sub:"非公開・OAC経由のみ",
+    ch:"ch6", detail:"React SPAのビルド成果物。パブリックアクセスは全遮断。CloudFrontのこのdistributionからのGetObjectだけをバケットポリシーで許可する。" },
+  { id:"s3app",   layer:"platform", life:"always", x:20,  y:250, w:200, h:52, label:"S3 (app)",        sub:"workerが保存",
+    ch:"ch2", detail:"processItemが処理結果のスナップショットJSONを保存する。バケットは非公開でforce_destroy=true（ビルド成果物同様いつでも再生成できる）。" },
+  { id:"cf",      layer:"edge",     life:"always", x:250, y:60,  w:190, h:56, label:"CloudFront",      sub:"2オリジン (*.cloudfront.net)",
+    ch:"ch6", detail:"HTTPSを終端し、既定はS3(SPA)、/api/*はALBへ。独自ドメイン無しでHTTPS化・CORS回避・mixed content回避を同時に解決する。" },
+  { id:"dbsecret",layer:"data",     life:"session", x:460, y:60,  w:160, h:56, label:"Secrets (db)",    sub:"random_password",
+    ch:"ch4", detail:"host/port/dbname/username/passwordを1本のJSONにまとめる。Terraformが値の持ち主なのでignore_changesは付けない。" },
+  { id:"oidc",    layer:"platform", life:"always", x:660, y:60,  w:190, h:56, label:"GitHub OIDC",     sub:"provider + 3ロール",
+    ch:"ch2", detail:"アクセスキー無しでGitHub ActionsにAWSの一時権限を渡す。sub条件でmainブランチのみに限定する。" },
+
+  // ---- network / app / data（VPC内・セッション毎） ----
+  { id:"alb",     layer:"network",  life:"session", x:250, y:158, w:190, h:56, label:"ALB",             sub:"public subnet ×2AZ",
+    ch:"ch5", detail:"/healthzでヘルスチェック。apiサービスのみに紐づき、workerには無い。" },
+  { id:"cognito", layer:"platform", life:"always", x:660, y:158, w:180, h:56, label:"Cognito",         sub:"User Pool / App Client",
+    ch:"ch2", detail:"USER_PASSWORD_AUTHで直接ログイン。App Clientはシークレット無しのパブリッククライアント。apiはアクセストークンをaws-jwt-verifyで検証する。" },
+  { id:"ecsapi",  layer:"app",      life:"session", x:250, y:250, w:170, h:56, label:"ECS: api",        sub:"Fargate / ARM64",
+    ch:"ch5", detail:"api task roleのみでDynamoDB Put/Get, SQS Send, Secrets Getを許可。execution roleはworkerと共用。" },
+  { id:"ecsworker",layer:"app",     life:"session", x:460, y:250, w:170, h:56, label:"ECS: worker",     sub:"Fargate / ARM64",
+    ch:"ch5", detail:"worker task roleのみでDynamoDB Put, S3 Put, SQS Receive/Deleteを許可。SQSをlong pollingする。" },
+  { id:"logs",    layer:"app",      life:"session", x:660, y:250, w:160, h:56, label:"CloudWatch Logs", sub:"api/worker",
+    ch:"ch5", detail:"pinoのJSONログをそのままstdoutへ。CloudWatch Logs側で構造化ログとして扱う。" },
+  { id:"ecr",     layer:"platform", life:"always", x:840, y:250, w:150, h:52, label:"ECR",             sub:"IMMUTABLE / 7桁SHA",
+    ch:"ch2", detail:"api/worker共用イメージ置き場。latestは使わずcommit SHAでタグ付け。lifecycleで最新10個だけ保持する。" },
+  { id:"rds",     layer:"data",     life:"session", x:250, y:342, w:170, h:52, label:"RDS PostgreSQL",  sub:"private subnet",
+    ch:"ch4", detail:"6層で唯一ステートフル。random_password+自前Secretsでmanage_master_user_passwordは使わない。" },
+  { id:"bastion", layer:"data",     life:"session", x:460, y:342, w:150, h:52, label:"踏み台 EC2",      sub:"SSM経由のみ",
+    ch:"ch4", detail:"ingressを持たずSSM Agentが自分から接続。RDSはSSM管理ノードになれないため、これが必要。" },
+  { id:"secrets", layer:"platform", life:"always", x:660, y:342, w:150, h:52, label:"Secrets (app)",   sub:"ダミー値 REPLACE_ME",
+    ch:"ch2", detail:"外部APIキー相当。実キーはCLI/コンソールから投入し、ignore_changesでTerraformの巻き戻しを防ぐ。" },
+  { id:"dynamo",  layer:"platform", life:"always", x:840, y:342, w:150, h:52, label:"DynamoDB",        sub:"items テーブル",
+    ch:"ch2", detail:"itemの status(pending/processed)を持つ。PAY_PER_REQUESTで、使わない時間の課金はほぼゼロ。" },
+  { id:"nat",     layer:"network",  life:"session", x:250, y:434, w:150, h:52, label:"NAT Gateway",     sub:"private→外部",
+    ch:"ch3", detail:"private subnetのECS/RDSがECR pull等の外向き通信をするための出口。1個のみでAZ間共有（コスト優先）。" },
+  { id:"sgchain", layer:"network",  life:"session", x:460, y:434, w:170, h:52, label:"SG chain",        sub:"ALB→ECS→RDS",
+    ch:"ch3", detail:"1ルール=1リソースのattachmentパターン。referenced_security_group_idで「前段のSGを持つものだけ許可」を表現する。" },
+  { id:"sqs",     layer:"platform", life:"always", x:840, y:434, w:150, h:52, label:"SQS + DLQ",       sub:"可視性30s / maxReceive 3",
+    ch:"ch2", detail:"createItemが送信、workerが受信。3回失敗するとDLQへ。可視性タイムアウトが再配信の間隔になる。" },
+];
+
+/* VPC の破線バンドを描く対象（bbox を自動計算する） */
+const VPC_NODE_IDS = ["alb", "ecsapi", "ecsworker", "rds", "bastion", "nat", "sgchain"];
+
+/* 常設の配線（構成モード・ライフサイクルモードで薄く表示する）。
+   kind: "solid"=実際のリクエスト経路にもなる通信 / "dashed"=NAT経由の外向き通信・SSMトンネル / "dotted"=CI・起動時取得などの制御系 */
+const ARCH_EDGES = [
+  { from:"cf",     to:"s3web",   kind:"solid" },
+  { from:"cf",     to:"alb",     kind:"solid" },
+  { from:"alb",    to:"ecsapi",  kind:"solid" },
+  { from:"ecsapi", to:"rds",     kind:"solid" },
+  { from:"ecsapi", to:"dynamo",  kind:"solid" },
+  { from:"ecsapi", to:"sqs",     kind:"solid" },
+  { from:"sqs",    to:"ecsworker", kind:"solid" },
+  { from:"ecsworker", to:"rds",   kind:"solid" },
+  { from:"ecsworker", to:"s3app", kind:"solid" },
+  { from:"ecsworker", to:"dynamo",kind:"solid" },
+  { from:"ecsapi", to:"dbsecret", kind:"dotted" },
+  { from:"ecsworker", to:"dbsecret", kind:"dotted" },
+  { from:"nat",    to:"ecsapi",   kind:"dashed" },
+  { from:"nat",    to:"ecsworker",kind:"dashed" },
+  { from:"nat",    to:"bastion",  kind:"dashed" },
+  { from:"bastion",to:"rds",      kind:"dashed" },
+  { from:"oidc",   to:"ecr",      kind:"dotted" },
+  { from:"oidc",   to:"s3web",    kind:"dotted" },
+  { from:"oidc",   to:"cf",       kind:"dotted" },
+  { from:"oidc",   to:"ecsapi",   kind:"dotted" },
+  { from:"oidc",   to:"ecsworker",kind:"dotted" },
+];
+
+/* リクエストがたどる経路（トレースモード）。from が null なら「ブラウザから」の入口。 */
+const REQUEST_STEPS = [
+  { from:null,      to:"cf",       label:"① ブラウザ → CloudFront",        note:"HTTPSでリクエスト。既定のビヘイビアはS3、/api/* はALBへ流す。" },
+  { from:"cf",      to:"alb",      label:"② /api/items へ",                note:"CachingDisabled・AllViewerExceptHostHeaderでAuthorizationヘッダを素通しする（第6章）。" },
+  { from:"alb",     to:"ecsapi",   label:"③ ALB → ECS(api)",               note:"api task roleでJWTを検証し、リクエストを処理する（第5章）。" },
+  { from:"ecsapi",  to:"rds",      label:"④ RDS へ insert",                note:"itemsテーブルに新しい行をinsertする。" },
+  { from:"ecsapi",  to:"dynamo",   label:"⑤ DynamoDB へ put(status=pending)", note:"statusをpendingでputする。" },
+  { from:"ecsapi",  to:"sqs",      label:"⑥ SQS へ send",                   note:"idを含むメッセージをキューに送る（第2章）。" },
+  { from:"sqs",     to:"ecsworker",label:"⑦ worker が long polling で受信", note:"receiveMessagesが5秒のロングポーリングで受信する。" },
+  { from:"ecsworker",to:"rds",     label:"⑧ RDS から読み直す",              note:"idの行をselectし直す。" },
+  { from:"ecsworker",to:"s3app",   label:"⑨ S3 へ put(スナップショット)",   note:"処理結果のJSONスナップショットを保存する。" },
+  { from:"ecsworker",to:"dynamo",  label:"⑩ DynamoDB へ put(status=processed)", note:"statusをprocessedに更新する。ここまでで1リクエストがRDB/NoSQL/S3/キューの全要素を通る。" },
+];
+
+const LAYER_META = {
+  bootstrap:{ label:"bootstrap", life:"once" },
+  platform:{ label:"platform", life:"always" },
+  edge:{ label:"edge", life:"always" },
+  network:{ label:"network", life:"session" },
+  data:{ label:"data", life:"session" },
+  app:{ label:"app", life:"session" },
+};
+
+const LIFE_META = {
+  always:{ label:"常時起動" },
+  session:{ label:"セッション毎" },
+  once:{ label:"一度だけ" },
+};
+</script>
+<script>
+(function () {
+  "use strict";
+
+  /* ================= utilities ================= */
+  function qs(sel, root) { return (root || document).querySelector(sel); }
+  function qsa(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  /* ================= progress store ================= */
+  var STORE_KEY = "infra-textbook-progress-v1";
+  var progress = { read: {}, quiz: {} };
+  function loadProgress() {
+    try {
+      var raw = localStorage.getItem(STORE_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          progress.read = parsed.read || {};
+          progress.quiz = parsed.quiz || {};
+        }
+      }
+    } catch (e) { /* private browsing 等。既定値のまま続行する */ }
+  }
+  function saveProgress() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(progress)); } catch (e) { /* noop */ }
+  }
+  function markRead(chapterId) {
+    if (!progress.read[chapterId]) {
+      progress.read[chapterId] = true;
+      saveProgress();
+      updateTocStatus(chapterId);
+      updateOverallStats();
+    }
+  }
+
+  /* ================= theme ================= */
+  var THEME_KEY = "infra-textbook-theme";
+  function applyTheme(mode) {
+    var root = document.documentElement;
+    if (mode === "light" || mode === "dark") root.setAttribute("data-theme", mode);
+    else root.removeAttribute("data-theme");
+    var btn = qs("#themeBtn");
+    if (btn) {
+      var label = mode === "light" ? "ライト" : mode === "dark" ? "ダーク" : "自動";
+      btn.textContent = "テーマ: " + label;
+    }
+  }
+  function initTheme() {
+    var saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch (e) { /* noop */ }
+    applyTheme(saved || "auto");
+    var btn = qs("#themeBtn");
+    if (btn) {
+      btn.addEventListener("click", function () {
+        var cur = null;
+        try { cur = localStorage.getItem(THEME_KEY); } catch (e) { /* noop */ }
+        var order = ["auto", "light", "dark"];
+        var next = order[(order.indexOf(cur || "auto") + 1) % order.length];
+        try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* noop */ }
+        applyTheme(next);
+      });
+    }
+  }
+
+  /* ================= navigation / TOC ================= */
+  var chapters = [];
+
+  function buildToc() {
+    chapters = qsa(".chapter");
+    var ol = qs("#toc");
+    ol.innerHTML = "";
+    chapters.forEach(function (ch) {
+      var li = document.createElement("li");
+      var a = document.createElement("a");
+      a.href = "#" + ch.id;
+      var layer = ch.dataset.layer;
+      if (layer) a.classList.add("l-" + layer);
+      a.innerHTML =
+        '<span class="n">' + esc(ch.dataset.num) + "</span>" +
+        "<span>" + esc(ch.dataset.short || ch.dataset.title) + "</span>" +
+        '<span class="st"></span>';
+      a.dataset.chapterId = ch.id;
+      li.appendChild(a);
+      ol.appendChild(li);
+    });
+    qs("#ovTotal").textContent = String(chapters.length);
+  }
+
+  function updateTocStatus(chapterId) {
+    var a = qs('#toc a[data-chapter-id="' + chapterId + '"]');
+    if (!a) return;
+    var ch = document.getElementById(chapterId);
+    var quizzes = qsa(".quiz", ch);
+    var total = quizzes.length;
+    var correct = 0;
+    quizzes.forEach(function (q) {
+      var rec = progress.quiz[q.dataset.id];
+      if (rec && rec.correct) correct++;
+    });
+    var read = !!progress.read[chapterId];
+    var st = a.querySelector(".st");
+    var parts = [];
+    if (read) parts.push("済");
+    if (total > 0) parts.push(correct + "/" + total);
+    st.textContent = parts.join(" ");
+    st.classList.toggle("done", read);
+  }
+
+  function updateOverallStats() {
+    var totalCh = chapters.length;
+    var readCh = Object.keys(progress.read).filter(function (id) {
+      return chapters.some(function (c) { return c.id === id; });
+    }).length;
+    var allQuizzes = qsa(".quiz");
+    var totalQ = allQuizzes.length;
+    var correctQ = 0;
+    allQuizzes.forEach(function (q) {
+      var rec = progress.quiz[q.dataset.id];
+      if (rec && rec.correct) correctQ++;
+    });
+    qs("#ovRead").textContent = String(readCh);
+    qs("#ovTotal").textContent = String(totalCh);
+    qs("#ovQuiz").textContent = String(correctQ);
+    qs("#ovQTotal").textContent = String(totalQ);
+    var ratio = (totalCh + totalQ) > 0 ? (readCh + correctQ) / (totalCh + totalQ) : 0;
+    qs("#ovBar").style.width = Math.round(ratio * 100) + "%";
+  }
+
+  function showChapter(id, opts) {
+    opts = opts || {};
+    var target = document.getElementById(id) && document.getElementById(id).classList.contains("chapter")
+      ? id : (chapters[0] && chapters[0].id);
+    if (!target) return;
+    chapters.forEach(function (ch) { ch.hidden = ch.id !== target; });
+    qsa("#toc a").forEach(function (a) {
+      var isCur = a.dataset.chapterId === target;
+      if (isCur) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+    });
+    var ch = document.getElementById(target);
+    var titleEl = document.getElementById("topTitle");
+    if (titleEl) titleEl.textContent = "CH" + ch.dataset.num + " " + (ch.dataset.short || ch.dataset.title);
+    document.title = (ch.dataset.title || "Terraform 本番構成を読み解く") + " | Terraform 本番構成を読み解く";
+    if (!opts.silent) window.scrollTo(0, 0);
+    document.body.classList.remove("nav-open");
+    var main = qs("#main");
+    if (main && !opts.silent) { try { main.focus({ preventScroll: true }); } catch (e) { main.focus(); } }
+  }
+
+  function initRouting() {
+    function fromHash() {
+      var id = (location.hash || "").replace(/^#/, "");
+      showChapter(id || (chapters[0] && chapters[0].id));
+    }
+    window.addEventListener("hashchange", fromHash);
+    fromHash();
+  }
+
+  function buildChapterFooter(ch, idx) {
+    var quizzes = qsa(".quiz", ch);
+    var prev = chapters[idx - 1];
+    var next = chapters[idx + 1];
+    var foot = document.createElement("div");
+    foot.className = "ch-foot";
+    var scoreHtml = quizzes.length
+      ? 'この章のクイズ: <strong data-score-correct>0</strong>/<strong>' + quizzes.length + "</strong> 正解"
+      : "この章にクイズはありません。";
+    var pagerHtml = '<div class="pager">' +
+      (prev ? '<a href="#' + prev.id + '"><small>← 前の章</small>' + esc(prev.dataset.short || prev.dataset.title) + "</a>" : "<span></span>") +
+      (next ? '<a class="next" href="#' + next.id + '"><small>次の章 →</small>' + esc(next.dataset.short || next.dataset.title) + "</a>" : "") +
+      "</div>";
+    foot.innerHTML = '<div class="score">' + scoreHtml + "</div>" + pagerHtml;
+    ch.appendChild(foot);
+    updateChapterFooterScore(ch);
+  }
+
+  function updateChapterFooterScore(ch) {
+    var el = ch.querySelector("[data-score-correct]");
+    if (!el) return;
+    var quizzes = qsa(".quiz", ch);
+    var correct = 0;
+    quizzes.forEach(function (q) {
+      var rec = progress.quiz[q.dataset.id];
+      if (rec && rec.correct) correct++;
+    });
+    el.textContent = String(correct);
+  }
+
+  function initReadObserver() {
+    if (!("IntersectionObserver" in window)) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          var ch = entry.target.closest(".chapter");
+          if (ch) markRead(ch.id);
+        }
+      });
+    }, { threshold: 0.1 });
+    qsa(".ch-foot").forEach(function (f) { io.observe(f); });
+  }
+
+  function initMobileNav() {
+    var btn = qs("#menuBtn"), scrim = qs("#scrim");
+    if (btn) btn.addEventListener("click", function () {
+      var open = document.body.classList.toggle("nav-open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    if (scrim) scrim.addEventListener("click", function () {
+      document.body.classList.remove("nav-open");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  function initResetButton() {
+    var btn = qs("#resetBtn");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      if (window.confirm("読了状況とクイズの正答をすべて消去して、最初からやり直しますか？")) {
+        try { localStorage.removeItem(STORE_KEY); } catch (e) { /* noop */ }
+        location.reload();
+      }
+    });
+  }
+
+  /* ================= code reader ================= */
+  var KEYWORDS_BLOCK = ["resource", "data", "variable", "output", "provider", "terraform",
+    "module", "locals", "dynamic", "lifecycle", "backend", "required_providers", "required_version"];
+  var VALUE_KEYWORDS = ["true", "false", "null"];
+  var FUNC_NAMES = ["jsonencode", "tostring", "tomap", "tolist", "tonumber", "can", "regex",
+    "join", "coalesce", "merge", "format", "try", "length", "lookup"];
+
+  function highlightInterp(strWithQuotes) {
+    var parts = strWithQuotes.split(/(\$\{[^}]*\})/g);
+    return parts.map(function (p) {
+      return p.charAt(0) === "$" && p.charAt(1) === "{"
+        ? '<span class="tok-int">' + esc(p) + "</span>" : esc(p);
+    }).join("");
+  }
+
+  var TOKEN_RE = /(#.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)/g;
+
+  function tokenizeLine(line) {
+    if (line === "") return "&nbsp;";
+    var trimmedStart = line.match(/^\s*/)[0].length;
+    var out = "", last = 0, m;
+    TOKEN_RE.lastIndex = 0;
+    while ((m = TOKEN_RE.exec(line))) {
+      out += esc(line.slice(last, m.index));
+      last = TOKEN_RE.lastIndex;
+      if (m[1] !== undefined) {
+        out += '<span class="tok-com">' + esc(m[1]) + "</span>";
+      } else if (m[2] !== undefined) {
+        out += '<span class="tok-str">' + highlightInterp(m[2]) + "</span>";
+      } else if (m[3] !== undefined) {
+        out += '<span class="tok-num">' + esc(m[3]) + "</span>";
+      } else if (m[4] !== undefined) {
+        var w = m[4];
+        var nextChar = line.charAt(TOKEN_RE.lastIndex);
+        var restAfter = line.slice(TOKEN_RE.lastIndex);
+        if (nextChar === ".") {
+          out += '<span class="tok-ref">' + esc(w) + "</span>";
+        } else if (VALUE_KEYWORDS.indexOf(w) !== -1) {
+          out += '<span class="tok-kw">' + esc(w) + "</span>";
+        } else if (FUNC_NAMES.indexOf(w) !== -1 && nextChar === "(") {
+          out += '<span class="tok-ref">' + esc(w) + "</span>";
+        } else if (KEYWORDS_BLOCK.indexOf(w) !== -1) {
+          out += '<span class="tok-kw">' + esc(w) + "</span>";
+        } else if (m.index === trimmedStart && /^\s*=(?!=)/.test(restAfter)) {
+          out += '<span class="tok-attr">' + esc(w) + "</span>";
+        } else {
+          out += esc(w);
+        }
+      }
+    }
+    out += esc(line.slice(last));
+    return out || "&nbsp;";
+  }
+
+  function parseRange(str) {
+    var bits = String(str).split("-").map(function (n) { return parseInt(n, 10); });
+    return { start: bits[0], end: bits.length > 1 && !isNaN(bits[1]) ? bits[1] : bits[0] };
+  }
+
+  function buildCodeFigure(figure) {
+    var scriptEl = figure.querySelector(":scope > script[type='text/plain']");
+    if (!scriptEl) return;
+    var raw = scriptEl.textContent.replace(/\r\n/g, "\n");
+    var lines = raw.split("\n");
+    if (lines.length && lines[0] === "") lines.shift();
+    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+
+    var first = parseInt(figure.dataset.first || "1", 10);
+    var file = figure.dataset.file || "";
+    var lang = figure.dataset.lang || "text";
+
+    var notesContainer = figure.querySelector(":scope > .notes");
+    var noteEls = notesContainer ? qsa(":scope > .note", notesContainer) : [];
+    var notes = noteEls.map(function (el, i) {
+      var r = parseRange(el.dataset.lines || "1-1");
+      return { start: r.start, end: r.end, title: el.dataset.title || "", html: el.innerHTML, index: i };
+    });
+    function noteForLine(lineNo) {
+      for (var i = 0; i < notes.length; i++) {
+        if (lineNo >= notes[i].start && lineNo <= notes[i].end) return notes[i];
+      }
+      return null;
+    }
+
+    var figcap = document.createElement("figcaption");
+    figcap.innerHTML =
+      '<span class="file">' + esc(file) + "</span>" +
+      "<span>" + esc(lang) + "</span>" +
+      (notes.length ? '<span class="hint">ハイライトされた行をクリック</span>' : "");
+
+    var scrollWrap = document.createElement("div");
+    scrollWrap.className = "code-scroll";
+    var table = document.createElement("table");
+    table.className = "lines";
+    var tbody = document.createElement("tbody");
+
+    lines.forEach(function (lineText, i) {
+      var lineNo = first + i;
+      var note = noteForLine(lineNo);
+      var tr = document.createElement("tr");
+      if (note) {
+        tr.className = "has-note";
+        tr.tabIndex = 0;
+        tr.setAttribute("role", "button");
+        tr.setAttribute("aria-label", "解説" + (note.index + 1) + "：" + note.title);
+        if (lineNo === note.start) tr.classList.add("note-first");
+        tr.dataset.noteIndex = String(note.index);
+      }
+      var tdNum = document.createElement("td");
+      tdNum.className = "num";
+      tdNum.textContent = String(lineNo);
+      var tdMark = document.createElement("td");
+      tdMark.className = "mark";
+      if (note && lineNo === note.start) {
+        tdMark.innerHTML = '<span class="badge">' + (note.index + 1) + "</span>";
+      }
+      var tdSrc = document.createElement("td");
+      tdSrc.className = "src";
+      tdSrc.innerHTML = tokenizeLine(lineText);
+      tr.appendChild(tdNum); tr.appendChild(tdMark); tr.appendChild(tdSrc);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    scrollWrap.appendChild(table);
+
+    var hint = document.createElement("p");
+    hint.className = "np-hint";
+    hint.textContent = notes.length ? "💡 ハイライトされた行（左に色付きの印）をクリックすると、この行の解説が出ます。" : "";
+
+    var panel = document.createElement("div");
+    panel.className = "note-panel";
+    panel.hidden = true;
+    panel.innerHTML =
+      '<div class="np-head"><span class="np-title"></span><span class="np-range"></span>' +
+      '<div class="np-btns"><button type="button" class="btn np-prev">← 前</button>' +
+      '<button type="button" class="btn np-next">次 →</button>' +
+      '<button type="button" class="btn np-close">閉じる</button></div></div>' +
+      '<div class="np-body"></div>';
+
+    figure.innerHTML = "";
+    figure.appendChild(figcap);
+    figure.appendChild(scrollWrap);
+    if (notes.length) { figure.appendChild(hint); figure.appendChild(panel); }
+
+    function clearActive() { qsa("tr.active", table).forEach(function (tr) { tr.classList.remove("active"); }); }
+
+    function openNote(noteIndex) {
+      var note = notes[noteIndex];
+      if (!note) return;
+      clearActive();
+      qsa("tr[data-note-index='" + noteIndex + "']", table).forEach(function (tr) { tr.classList.add("active"); });
+      panel.querySelector(".np-title").textContent = note.title;
+      panel.querySelector(".np-range").textContent =
+        note.start === note.end ? ("L" + note.start) : ("L" + note.start + "–" + note.end);
+      panel.querySelector(".np-body").innerHTML = note.html;
+      panel.hidden = false;
+      hint.style.display = "none";
+      panel.querySelector(".np-prev").disabled = noteIndex <= 0;
+      panel.querySelector(".np-next").disabled = noteIndex >= notes.length - 1;
+      panel.dataset.current = String(noteIndex);
+      var firstRow = qs("tr[data-note-index='" + noteIndex + "']", table);
+      if (firstRow) {
+        var rect = firstRow.getBoundingClientRect();
+        if (rect.top < 60 || rect.bottom > window.innerHeight - 160) {
+          firstRow.scrollIntoView({ block: "center", behavior: "smooth" });
+        }
+      }
+    }
+    function closeNote() {
+      panel.hidden = true;
+      hint.style.display = "";
+      clearActive();
+    }
+
+    tbody.addEventListener("click", function (e) {
+      var tr = e.target.closest("tr.has-note");
+      if (!tr) return;
+      openNote(parseInt(tr.dataset.noteIndex, 10));
+    });
+    tbody.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      var tr = e.target.closest("tr.has-note");
+      if (!tr) return;
+      e.preventDefault();
+      openNote(parseInt(tr.dataset.noteIndex, 10));
+    });
+    if (notes.length) {
+      panel.querySelector(".np-prev").addEventListener("click", function () {
+        openNote(Math.max(0, parseInt(panel.dataset.current, 10) - 1));
+      });
+      panel.querySelector(".np-next").addEventListener("click", function () {
+        openNote(Math.min(notes.length - 1, parseInt(panel.dataset.current, 10) + 1));
+      });
+      panel.querySelector(".np-close").addEventListener("click", closeNote);
+    }
+  }
+
+  /* ================= quiz ================= */
+  var KIND_LABEL = { "選択": "選択問題", "予測": "予測問題", "穴埋め": "穴埋め問題" };
+
+  function buildQuiz(quiz) {
+    var kind = quiz.dataset.kind || "選択";
+    var ol = quiz.querySelector("ol");
+    var explain = quiz.querySelector(".explain");
+    var qText = quiz.querySelector(".q");
+    var items = qsa("li", ol);
+    var correctIndex = items.findIndex(function (li) { return li.hasAttribute("data-correct"); });
+
+    var head = document.createElement("div");
+    head.className = "qhead";
+    head.innerHTML = '<span class="qbadge">' + esc(KIND_LABEL[kind] || kind) + "</span>";
+    quiz.insertBefore(head, qText);
+
+    var opts = document.createElement("div");
+    opts.className = "opts";
+    var letters = ["A", "B", "C", "D"];
+    items.forEach(function (li, i) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "opt";
+      btn.innerHTML = '<span class="mk">' + letters[i] + ".</span><span>" + li.innerHTML + "</span>";
+      opts.appendChild(btn);
+      btn.addEventListener("click", function () { answer(i, btn); });
+    });
+    ol.parentNode.insertBefore(opts, ol);
+    ol.hidden = true;
+
+    var retryWrap = document.createElement("div");
+    retryWrap.className = "qretry";
+    var retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "btn";
+    retryBtn.textContent = "もう一度挑戦する";
+    retryBtn.hidden = true;
+    retryWrap.appendChild(retryBtn);
+    quiz.appendChild(retryWrap);
+
+    var rec = progress.quiz[quiz.dataset.id];
+    var answered = !!(rec && rec.answered);
+    if (answered) {
+      // 再訪問時：選んだ選択肢は分からないので、正解だけを示して解説を開いておく
+      lockOptions();
+      qsa(".opt", opts)[correctIndex].classList.add("correct");
+      explain.hidden = false;
+      setVerdict(!!rec.correct);
+      retryBtn.hidden = false;
+    }
+
+    function lockOptions() { qsa(".opt", opts).forEach(function (b) { b.disabled = true; }); }
+
+    function setVerdict(ok) {
+      explain.classList.remove("ok", "ng");
+      explain.classList.add(ok ? "ok" : "ng");
+      var v = explain.querySelector(".verdict");
+      if (!v) {
+        v = document.createElement("span");
+        v.className = "verdict";
+        explain.insertBefore(v, explain.firstChild);
+      }
+      v.textContent = ok ? "正解です。" : "不正解です。正しい選択肢を確認しましょう。";
+    }
+
+    function answer(i, btn) {
+      if (btn.disabled) return;
+      lockOptions();
+      var ok = i === correctIndex;
+      var optBtns = qsa(".opt", opts);
+      if (ok) {
+        btn.classList.add("correct");
+      } else {
+        btn.classList.add("wrong");
+        optBtns[correctIndex].classList.add("correct");
+      }
+      explain.hidden = false;
+      setVerdict(ok);
+      retryBtn.hidden = false;
+
+      var prevCorrect = progress.quiz[quiz.dataset.id] && progress.quiz[quiz.dataset.id].correct;
+      progress.quiz[quiz.dataset.id] = { answered: true, correct: ok || !!prevCorrect };
+      saveProgress();
+      var ch = quiz.closest(".chapter");
+      if (ch) { updateChapterFooterScore(ch); updateTocStatus(ch.id); }
+      updateOverallStats();
+    }
+
+    retryBtn.addEventListener("click", function () {
+      qsa(".opt", opts).forEach(function (b) {
+        b.disabled = false; b.classList.remove("correct", "wrong");
+      });
+      explain.hidden = true;
+      retryBtn.hidden = true;
+    });
+  }
+
+  /* ================= architecture diagram ================= */
+  function nodeCenter(n) { return { x: n.x + n.w / 2, y: n.y + n.h / 2 }; }
+  function nodeById(id) { return ARCH_NODES.find(function (n) { return n.id === id; }); }
+
+  function computeVpcBox() {
+    var pad = 16, minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    VPC_NODE_IDS.forEach(function (id) {
+      var n = nodeById(id);
+      minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
+    });
+    return { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
+  }
+
+  function createDiagram(container) {
+    var uid = container.id || ("dg" + Math.floor(Math.random() * 1e6));
+    var state = { mode: "structure", selected: null, step: 0 };
+
+    container.innerHTML =
+      '<div class="dg-bar">' +
+      '<button type="button" class="dg-tab" data-mode="structure" aria-pressed="true">構成を見る</button>' +
+      '<button type="button" class="dg-tab" data-mode="life">ライフサイクル</button>' +
+      '<button type="button" class="dg-tab" data-mode="trace">リクエストをたどる</button>' +
+      '<span class="sp"></span>' +
+      "</div>" +
+      '<div class="dg-legend"></div>' +
+      '<div class="dg-stage"></div>' +
+      '<div class="dg-panel"><p>ノードをクリックすると、役割と設計判断が表示されます。</p></div>';
+
+    var stage = qs(".dg-stage", container);
+    var legend = qs(".dg-legend", container);
+    var panel = qs(".dg-panel", container);
+
+    var vpc = computeVpcBox();
+    var svgParts = [];
+    svgParts.push('<svg viewBox="0 0 1010 530" role="img" aria-label="learn-aws-saas-ts のアーキテクチャ図" class="mode-structure">');
+    svgParts.push(
+      '<defs><marker id="' + uid + '-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">' +
+      '<path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>'
+    );
+    svgParts.push('<rect class="vpc" x="' + vpc.x + '" y="' + vpc.y + '" width="' + vpc.w + '" height="' + vpc.h + '" rx="14"/>');
+    svgParts.push('<text class="band-label" x="' + (vpc.x + 10) + '" y="' + (vpc.y + 18) + '">VPC（network 層）</text>');
+
+    // browser entry hint (above CloudFront)
+    var cf = nodeById("cf");
+    var bx = cf.x + cf.w / 2;
+    svgParts.push('<g class="browser-hint" data-browser="1">' +
+      '<line class="edge" data-edge="browser" x1="' + bx + '" y1="' + (cf.y - 34) + '" x2="' + bx + '" y2="' + (cf.y - 2) + '" marker-end="url(#' + uid + '-arrow)"/>' +
+      '<text x="' + bx + '" y="' + (cf.y - 40) + '" text-anchor="middle" class="sub" style="font-weight:700">ブラウザ</text>' +
+      "</g>");
+
+    // static wiring edges (under nodes)
+    svgParts.push('<g class="dag-edges">');
+    ARCH_EDGES.forEach(function (e, i) {
+      var a = nodeCenter(nodeById(e.from)), b = nodeCenter(nodeById(e.to));
+      var cls = "dag-edge" + (e.kind === "dashed" ? " dashed" : e.kind === "dotted" ? " dotted" : "");
+      svgParts.push('<line class="' + cls + '" data-edge-i="' + i + '" x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y + '"/>');
+    });
+    svgParts.push("</g>");
+
+    // request-trace edges (hidden until trace mode)
+    svgParts.push('<g class="trace-edges">');
+    REQUEST_STEPS.forEach(function (s, i) {
+      if (s.from === null) return;
+      var a = nodeCenter(nodeById(s.from)), b = nodeCenter(nodeById(s.to));
+      svgParts.push('<line class="edge" data-step="' + i + '" x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y + '" marker-end="url(#' + uid + '-arrow)"/>');
+    });
+    svgParts.push("</g>");
+
+    // nodes
+    svgParts.push('<g class="nodes">');
+    ARCH_NODES.forEach(function (n) {
+      var c = nodeCenter(n);
+      svgParts.push(
+        '<g class="n ' + n.layer + " life-" + n.life + '" data-id="' + n.id + '" tabindex="0" role="button" aria-label="' + esc(n.label) + '">' +
+        '<rect class="tint" x="' + n.x + '" y="' + n.y + '" width="' + n.w + '" height="' + n.h + '" rx="10"/>' +
+        '<rect class="frame" x="' + n.x + '" y="' + n.y + '" width="' + n.w + '" height="' + n.h + '" rx="10"/>' +
+        '<text class="lbl" x="' + c.x + '" y="' + (c.y - 3) + '">' + esc(n.label) + "</text>" +
+        '<text class="sub" x="' + c.x + '" y="' + (c.y + 15) + '">' + esc(n.sub) + "</text>" +
+        "</g>"
+      );
+    });
+    svgParts.push("</g></svg>");
+    stage.innerHTML = svgParts.join("");
+    var svg = qs("svg", stage);
+
+    function layerLabel(layer) {
+      return { bootstrap: "bootstrap", platform: "platform", edge: "edge", network: "network", data: "data", app: "app" }[layer] || layer;
+    }
+    function lifeLabel(life) {
+      return { always: "常時起動", session: "セッション毎", once: "一度だけ" }[life] || life;
+    }
+
+    function renderLegend() {
+      if (state.mode === "structure") {
+        legend.innerHTML = ["bootstrap", "platform", "edge", "network", "data", "app"].map(function (l) {
+          return '<span><i style="border-color:var(--c-' + l + ')"></i>' + layerLabel(l) + "</span>";
+        }).join("") + "<span>クリックで詳細 / ドラッグなしで見渡せます</span>";
+      } else if (state.mode === "life") {
+        legend.innerHTML =
+          '<span><i style="border-color:var(--life-always)"></i>常時起動（触らなくても存在し続ける）</span>' +
+          '<span><i style="border-color:var(--life-session)"></i>セッション毎（使う時だけ apply）</span>' +
+          '<span><i style="border-color:var(--life-once)"></i>一度だけ（tfstate 用）</span>';
+      } else {
+        legend.innerHTML =
+          '<span><i class="dash" style="border-color:var(--accent)"></i>今のステップ（アニメーション）</span>' +
+          '<span>薄い実線＝通過済みのステップ</span>' +
+          '<span>グレーの点線・破線＝常設の配線（第0〜6章）</span>';
+      }
+    }
+
+    function renderPanelForNode(n) {
+      panel.innerHTML =
+        "<h4>" + esc(n.label) +
+        '<span class="chip l-' + n.layer + '">' + layerLabel(n.layer) + "</span>" +
+        '<span class="life ' + n.life + '">' + lifeLabel(n.life) + "</span></h4>" +
+        "<p>" + esc(n.detail) + "</p>" +
+        '<p class="kv"><a href="#' + n.ch + '">→ ' + esc(n.ch.replace("ch", "第") + "章") + "で詳しく読む</a></p>";
+    }
+
+    function selectNode(id) {
+      state.selected = id;
+      qsa(".n", svg).forEach(function (g) { g.classList.toggle("sel", g.dataset.id === id); });
+      var n = nodeById(id);
+      if (n) renderPanelForNode(n);
+    }
+
+    qsa(".n", svg).forEach(function (g) {
+      g.addEventListener("click", function () { selectNode(g.dataset.id); });
+      g.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectNode(g.dataset.id); }
+      });
+    });
+
+    function clearTraceHighlights() {
+      qsa(".n", svg).forEach(function (g) { g.classList.remove("on"); });
+      qsa(".edge", svg).forEach(function (e) { e.classList.remove("on", "past"); });
+    }
+
+    function renderTraceStepPanel() {
+      var s = REQUEST_STEPS[state.step];
+      var dots = REQUEST_STEPS.map(function (_, i) {
+        return '<button type="button" data-i="' + i + '"' +
+          (i === state.step ? ' aria-current="step"' : "") +
+          (i <= state.step ? ' class="seen"' : "") + ">" + (i + 1) + "</button>";
+      }).join("");
+      panel.innerHTML =
+        "<h4>" + esc(s.label) + "</h4>" +
+        "<p>" + esc(s.note) + "</p>" +
+        '<div class="step-nav">' +
+        '<span class="step-count">ステップ ' + (state.step + 1) + " / " + REQUEST_STEPS.length + "</span>" +
+        '<button type="button" class="btn" data-nav="prev"' + (state.step === 0 ? " disabled" : "") + ">← 前へ</button>" +
+        '<button type="button" class="btn" data-nav="next"' + (state.step === REQUEST_STEPS.length - 1 ? " disabled" : "") + ">次へ →</button>" +
+        '<div class="step-dots">' + dots + "</div>" +
+        "</div>";
+      qs('[data-nav="prev"]', panel).addEventListener("click", function () { goToStep(state.step - 1); });
+      qs('[data-nav="next"]', panel).addEventListener("click", function () { goToStep(state.step + 1); });
+      qsa(".step-dots button", panel).forEach(function (b) {
+        b.addEventListener("click", function () { goToStep(parseInt(b.dataset.i, 10)); });
+      });
+    }
+
+    function goToStep(i) {
+      i = Math.max(0, Math.min(REQUEST_STEPS.length - 1, i));
+      state.step = i;
+      clearTraceHighlights();
+      for (var j = 0; j <= i; j++) {
+        var s = REQUEST_STEPS[j];
+        var edgeSel = s.from === null ? '[data-edge="browser"]' : '.edge[data-step="' + j + '"]';
+        var edgeEl = qs(edgeSel, svg);
+        if (edgeEl) edgeEl.classList.add(j === i ? "on" : "past");
+        if (j === i) {
+          if (s.from) { var gf = qs('.n[data-id="' + s.from + '"]', svg); if (gf) gf.classList.add("on"); }
+          var gt = qs('.n[data-id="' + s.to + '"]', svg); if (gt) gt.classList.add("on");
+        }
+      }
+      renderTraceStepPanel();
+    }
+
+    function setMode(mode) {
+      state.mode = mode;
+      qsa(".dg-tab", container).forEach(function (b) {
+        b.setAttribute("aria-pressed", b.dataset.mode === mode ? "true" : "false");
+      });
+      svg.classList.remove("mode-structure", "mode-life", "mode-trace", "tracing");
+      svg.classList.add("mode-" + mode);
+      renderLegend();
+      if (mode === "trace") {
+        svg.classList.add("tracing");
+        goToStep(0);
+      } else {
+        clearTraceHighlights();
+        if (state.selected) {
+          var n = nodeById(state.selected);
+          if (n) renderPanelForNode(n);
+        } else {
+          panel.innerHTML = "<p>ノードをクリックすると、役割と設計判断が表示されます。</p>";
+        }
+      }
+    }
+
+    qsa(".dg-tab", container).forEach(function (b) {
+      b.addEventListener("click", function () { setMode(b.dataset.mode); });
+    });
+
+    renderLegend();
+  }
+
+  /* ================= init ================= */
+  document.addEventListener("DOMContentLoaded", function () {
+    loadProgress();
+    initTheme();
+    buildToc();
+    qsa("figure.code").forEach(buildCodeFigure);
+    qsa(".quiz").forEach(buildQuiz);
+    chapters.forEach(function (ch, i) { buildChapterFooter(ch, i); });
+    chapters.forEach(function (ch) { updateTocStatus(ch.id); });
+    qsa(".diagram").forEach(createDiagram);
+    initRouting();
+    initReadObserver();
+    initMobileNav();
+    initResetButton();
+    updateOverallStats();
+  });
+})();
+</script>
+</body>
+</html>
