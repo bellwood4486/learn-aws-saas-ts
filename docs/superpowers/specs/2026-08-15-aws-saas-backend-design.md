@@ -192,7 +192,7 @@ AWS Prescriptive Guidance の標準構成は「1つの root module + `envs/*/ter
 | 層（root module） | 中身 | ライフサイクル | コスト |
 |---|---|---|---|
 | `infra/bootstrap/` | tfstate 用 S3 バケット | 一度だけ。local state を commit | ~$0 |
-| `infra/platform/` | アプリ用 S3, DynamoDB, SQS+DLQ, ECR, アプリ用シークレット, Cognito, GitHub OIDC provider, CI/CD 用ロール（`github_publish` / `github_deploy_api`） | **常時起動** | ~$1/月 |
+| `infra/platform/` | アプリ用 S3, DynamoDB, SQS+DLQ, ECR, アプリ用シークレット, Cognito, GitHub OIDC provider, CI/CD 用ロール（`github_publish` / `github_deploy_api`）, KMS キー（`app` 1 本。M10） | **常時起動** | ~$1/月（M10 で KMS キー分 +$1/月） |
 | `infra/edge/` | フロント配信用 S3, **CloudFront（2オリジン）**, CI/CD 用ロール（`github_deploy_web`） | **常時起動** | ~$0（時間課金なし） |
 | `infra/network/` | VPC, public/private subnet ×2AZ, IGW, NAT GW, route table, SG | セッション毎 | NAT $0.062/h + EIP $0.005/h |
 | `infra/data/` | RDS PostgreSQL, subnet group, parameter group, DB 認証情報のシークレット, SSM 踏み台用 EC2/IAM ロール | セッション毎・**ステートフル**（RDS のみ。踏み台 EC2 はステートレス） | ~$0.02/h（RDS）+ 踏み台 t4g.nano 分（僅少） |
@@ -278,6 +278,7 @@ RDS の `manage_master_user_password = true` は近年の定番だが、**この
 3. **RDS のデータは destroy で消える** — 学習用途なので受け入れる。`skip_final_snapshot = true` / `deletion_protection = false` を明示し、スキーマは Drizzle の migration、初期データは seed で毎回流し直す
 4. **ECR は platform 層** — destroy してもイメージを残すため。ただし `publish-image` が main の全コミットでイメージを push するので、**lifecycle policy で「最新10個だけ残す」を必ず入れる**。1イメージ 200〜300MB × $0.10/GB月なので、数十個溜まると $10 予算の無視できない割合になる（衛生の話ではなく予算の話）
 5. **S3 バケットの `force_destroy`** — 層ごとに扱いを明示（フロント配信用バケットは常時起動層なので destroy しない）
+6. **KMS キーは即時削除できない（M10）** — 削除は最低 7 日の待機になり、その間は同じ alias を取り直せない。だから鍵はセッション毎の層に置かず `platform/` に常設する。platform を destroy すると、その鍵で暗号化した S3 オブジェクトや `note` 列が読めなくなる点にも注意
 
 ---
 
@@ -654,6 +655,41 @@ apps/web/
 **（オプション）M9: NAT を VPC エンドポイントに置き換えて比較**
 - Gateway 型(S3/DynamoDB)は無料、Interface 型は各 ~$7-8/月。コストと構成の違いを実測する
 
+**（オプション）M10: KMS — 鍵を自分で持つ（サービス統合 + アプリ側エンベロープ暗号化）**
+
+これまでの暗号化はすべて「AWS 任せ」（S3 は SSE-S3 の `AES256`、RDS は AWS 管理キー）。M10 では顧客管理キー（CMK）を 1 本作り、**KMS の使い方を 2 通り**体験する。実装計画は [`docs/superpowers/plans/2026-11-21-m10-kms.md`](../plans/2026-11-21-m10-kms.md)。
+
+**鍵の置き方（先に決めたこと）**
+- **鍵は `platform/` に 1 本だけ**（`aws_kms_key.app`、alias `alias/<project>-app`）。CMK は削除に最低 7 日の待機（`deletion_window_in_days` は 7〜30）が要るため、セッション毎の層に置くと `just down` のたびに削除待ちの鍵が残る。`manage_master_user_password` を採らなかった理由（「シークレットと destroy 運用」節）と同じ罠。コストも CMK 1 本 $1/月で予算（~$10）の約 1 割なので、用途ごとに分けず共有する
+- **鍵ポリシーはアカウント root への委譲（`kms:*`）だけ。** 鍵の利用許可は IAM ポリシー側で書く。root 委譲を外すと、ローカルの SSO ロールを含めて IAM では鍵に触れなくなり、締め出しの危険がある
+- **ローテーションは `enable_key_rotation = true`（`rotation_period_in_days = 365`）。** 鍵 ID は変わらず、過去の暗号文はそのまま復号できる。追加料金の有無は実装時に AWS の料金ページで確認し、`infra/platform/README.md` に根拠付きで書く
+- **IAM の `Resource` には鍵 ARN を書く。alias ARN では一致しない。** alias は SDK 呼び出しの `KeyId` にだけ使える
+
+**例 A — サービス統合（S3 の SSE-KMS）**
+- `platform/` のアプリ用バケットの既定暗号化を `AES256` から `aws:kms`（`kms_master_key_id` = 鍵 ARN、`bucket_key_enabled = true` は既存のまま）に切り替える。**`edge/` の配信用バケットと `bootstrap/` の tfstate バケットは `AES256` のまま**（CloudFront OAC に鍵ポリシーを足す話はこの学習の主題から外れる。tfstate は壊せない土台）
+- worker の task role に `kms:GenerateDataKey` を足す。条件は `kms:ViaService = s3.<region>.amazonaws.com`（S3 経由でしかこの鍵を使えない）。api は S3 を触らないので何も足さない。**鍵ポリシー（root 委譲）と IAM の両方が許して初めて通る**二重の関門と、「足し忘れは実行時にしか分からない」ことを体感するのが目的
+- 切り替え前に書かれたオブジェクト（SSE-S3）は、そのまま読める（再暗号化されない）
+
+**例 B — アプリ側エンベロープ暗号化（`items.note`）**
+- `note` を保存前に暗号化し、取得時に復号する。**`Encrypt` を直接呼ばずエンベロープ方式（`GenerateDataKey` → AES-256-GCM）にする理由**: `Encrypt` の平文上限は 4096 バイトで、`note` は最大 2000 文字（日本語は 1 文字 3 バイトなので最大約 6000 バイト）に収まらない。これが「なぜ実務はエンベロープか」の実例になる
+- 暗号文は `v1.<暗号化データキー>.<iv>.<暗号文>.<tag>`（各 base64url、1 本の文字列）として **既存の `note` text 列にそのまま入れる**。スキーマ変更・migration は無し
+- **暗号化コンテキストは `{ table: "items", column: "note", rowId: <行の uuid> }`。** 行の uuid は DB の既定値ではなくアプリ側で生成して insert に渡す（暗号化を insert の前に行うため）。これで「ある行の暗号文を別の行にコピーしても復号できない」ことを実際に確かめられる
+- **復号できるのは api だけ。** worker は復号せず、S3 のスナップショットには暗号文のまま入る（worker は `note` の平文を一度も見ない）。api の task role には `kms:GenerateDataKey` / `kms:Decrypt` を、`kms:EncryptionContext:table = items` を必須にする条件付きで与える
+- データキーのキャッシュはしない（リクエスト毎に KMS を呼ぶ）。`listItems` は行ごとに Decrypt を 1 回呼ぶ（既存の N+1 に上乗せ）。学習用途で許容し、AWS Encryption SDK のキャッシュは対象外にする
+- 既存の平文の `note` を持つ行の移行はしない（RDS は毎セッション作り直す）。暗号文の形式でない値を読んだら黙って返さず例外にする
+- 低レベルの KMS 呼び出しは `@repo/core` の `kms.ts`（`generateDataKey` / `decryptDataKey`）、暗号化の組み立ては `field-cipher.ts`（`FieldCipher`）に分け、items のドメイン関数には `FieldCipher` を依存として注入する（テストは KMS に繋がずフェイクで検証）
+
+**やらない（比較表にだけ残す）**
+
+| 対象 | CMK にした場合の違い |
+|---|---|
+| SQS | `kms_master_key_id` を 1 行足すだけ。送信側に `GenerateDataKey`+`Decrypt`、受信側に `Decrypt` が要る。`kms_data_key_reuse_period_seconds`（既定 300 秒）が KMS 呼び出し回数＝コストに効く |
+| DynamoDB | `server_side_encryption { kms_key_arn }`。呼び出し側に鍵の権限が要る |
+| Secrets Manager | `kms_key_id`。`aws/secretsmanager`（AWS 管理キー）なら task role に何も足さなくてよかったが、CMK にすると読む側に `Decrypt` が要る |
+| RDS | `kms_key_id` を変えるとインスタンスが作り直しになる（`data/` は毎セッション作り直すので無害）。鍵は `platform/` にあるので data 層から `terraform_remote_state` で参照する |
+
+**実機で確かめること（M10 の受け入れ条件は「検証方法」節）**: `head-object` で `aws:kms`、`note` 列が暗号文、CloudTrail の KMS イベント、worker の権限を一時的に外して AccessDenied、行をまたいだ暗号文のコピーで `InvalidCiphertextException`、鍵の無効化で全 API が止まる（鍵 = キルスイッチ）。
+
 ---
 
 ## 主要なファイル
@@ -697,6 +733,14 @@ apps/web/
   3. `just up`（`image_tag` は発行済みの SHA A）の後、別の SHA B を main に発行し、`deploy-api` を手動実行する。タスク定義のリビジョンが上がり、api / worker の両サービスが安定し、`/healthz` が応答する
   4. `just down` の後に `just leaks` で消し残しがゼロ （確認済み）
 
+- **M10（オプション）** — 課金セッションを 1 回にまとめて確認する
+  1. `platform/` を apply すると、`aws kms describe-key --key-id alias/<project>-app` が `Enabled`、`get-key-rotation-status` が有効を返し、ローカルの SSO ロールから `aws kms generate-data-key` が通る
+  2. `just up` の後に `POST /api/items`（`note` 付き、日本語 2000 文字を含む）が 201 で平文の `note` を返し、`GET /api/items/:id` も平文を返す
+  3. `just db-psql` で見ると `items.note` が `v1.` で始まる暗号文になっている。`aws s3api head-object` で `items/<id>.json` が `ServerSideEncryption: aws:kms`・`SSEKMSKeyId` = 鍵 ARN で、中の `note` は暗号文のまま
+  4. `aws cloudtrail lookup-events`（`EventSource = kms.amazonaws.com`）に、api の task role の `GenerateDataKey` / `Decrypt`（暗号化コンテキスト付き）と、worker の task role 由来の `GenerateDataKey`（S3 経由）が出る
+  5. 実験（いずれも結果を本節に追記する）: worker の KMS 権限を外して再 apply → worker のログに AccessDenied でメッセージが再配送される／ある行の `note` を別の行にコピー → `GET` が失敗し `InvalidCiphertextException`／`aws kms disable-key` → `GET`・worker とも失敗し、`enable-key` で復旧する
+  6. `just down` の後の `just leaks` は従来どおり（鍵は platform の常設リソースなので消えない）。`just cost-report` で KMS が $1 前後であること
+
 **コスト検証（毎セッション必須）**: `just down` の後に `just leaks` と `just cost-report` を実行し、NAT / EIP / ALB / RDS / 削除待ちシークレットがゼロであることを確認する。
 
 ---
@@ -713,4 +757,5 @@ apps/web/
 - Next.js（SSR サーバの置き場所が要り、Fargate の API と役割が競合する。SPA + S3/CloudFront のほうがこの構成では素直）
 - Changesets（パッケージを npm に publish しないので不要）
 - `@fastify/autoload` / `tsx`（前者は挙動未検証のため明示登録を採用、後者は Node ネイティブの型除去で足りる）
+- KMS（M10）で、用途ごとの複数鍵・マルチリージョンキー・AWS Encryption SDK・データキャッシュ・`edge/` と `bootstrap/` バケットの SSE-KMS 化・SQS/DynamoDB/Secrets Manager/RDS の CMK 化（比較表だけ残す）
 - TypeScript 7.0（Go 移植のネイティブコンパイラ。`latest` タグだが出たばかりでエコシステムの追随が未知数のため、枯れている 5.9系を採用）
